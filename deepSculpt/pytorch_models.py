@@ -6,7 +6,7 @@ This file contains all PyTorch model architectures equivalent to the TensorFlow 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List, Union
 import math
 
 
@@ -760,18 +760,938 @@ class ConditionalGenerator(nn.Module):
         
         # Condition embedding
         self.condition_embedding = nn.Embedding(condition_dim, noise_dim)
-        
-        # Use skip generator as base
-        self.base_generator = SkipGenerator(void_dim, noise_dim * 2, color_mode, sparse)
+
+
+# ============================================================================
+# 3D U-Net Architecture for Diffusion Models
+# ============================================================================
+
+class SinusoidalPositionEmbedding(nn.Module):
+    """
+    Sinusoidal position embedding for time steps in diffusion models.
     
-    def forward(self, noise: torch.Tensor, condition: torch.Tensor) -> torch.Tensor:
-        # Embed condition
-        condition_emb = self.condition_embedding(condition)
+    This creates embeddings for timesteps that help the model understand
+    the current noise level in the diffusion process.
+    """
+    
+    def __init__(self, dim: int, max_period: int = 10000):
+        super().__init__()
+        self.dim = dim
+        self.max_period = max_period
         
-        # Concatenate noise and condition
-        x = torch.cat([noise, condition_emb], dim=1)
+    def forward(self, timesteps: torch.Tensor) -> torch.Tensor:
+        """
+        Create sinusoidal embeddings for timesteps.
         
-        return self.base_generator(x)
+        Args:
+            timesteps: Tensor of shape (batch_size,) containing timestep values
+            
+        Returns:
+            Embeddings of shape (batch_size, dim)
+        """
+        device = timesteps.device
+        half_dim = self.dim // 2
+        
+        # Create frequency embeddings
+        freqs = torch.exp(
+            -math.log(self.max_period) * torch.arange(half_dim, device=device) / half_dim
+        )
+        
+        # Apply to timesteps
+        args = timesteps[:, None] * freqs[None, :]
+        embeddings = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+        
+        # Handle odd dimensions
+        if self.dim % 2 == 1:
+            embeddings = torch.cat([embeddings, torch.zeros_like(embeddings[:, :1])], dim=-1)
+            
+        return embeddings
+
+
+class TimeEmbedding(nn.Module):
+    """
+    Time embedding module that processes timestep embeddings for diffusion.
+    
+    Converts sinusoidal position embeddings into feature representations
+    that can be injected into the U-Net at multiple scales.
+    """
+    
+    def __init__(self, time_dim: int, hidden_dim: int):
+        super().__init__()
+        self.time_dim = time_dim
+        self.hidden_dim = hidden_dim
+        
+        self.time_embedding = SinusoidalPositionEmbedding(time_dim)
+        self.time_mlp = nn.Sequential(
+            nn.Linear(time_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
+        
+    def forward(self, timesteps: torch.Tensor) -> torch.Tensor:
+        """
+        Process timesteps into embeddings.
+        
+        Args:
+            timesteps: Tensor of shape (batch_size,)
+            
+        Returns:
+            Time embeddings of shape (batch_size, hidden_dim)
+        """
+        time_emb = self.time_embedding(timesteps)
+        time_emb = self.time_mlp(time_emb)
+        return time_emb
+
+
+class ResidualBlock3D(nn.Module):
+    """
+    3D Residual block with time embedding injection and optional sparse tensor support.
+    
+    This block forms the core building component of the U-Net, providing
+    stable training through residual connections and time conditioning.
+    """
+    
+    def __init__(self, in_channels: int, out_channels: int, time_dim: int,
+                 kernel_size: int = 3, padding: int = 1, sparse: bool = False,
+                 dropout: float = 0.1):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.sparse = sparse
+        
+        # Choose layer types based on sparse mode
+        Conv3d = SparseConv3d if sparse else nn.Conv3d
+        BatchNorm = SparseBatchNorm3d if sparse else nn.BatchNorm3d
+        
+        # First convolution block
+        self.conv1 = Conv3d(in_channels, out_channels, kernel_size, padding=padding)
+        self.norm1 = BatchNorm(out_channels)
+        
+        # Time embedding projection
+        self.time_proj = nn.Linear(time_dim, out_channels)
+        
+        # Second convolution block
+        self.conv2 = Conv3d(out_channels, out_channels, kernel_size, padding=padding)
+        self.norm2 = BatchNorm(out_channels)
+        
+        # Residual connection
+        if in_channels != out_channels:
+            self.residual_conv = Conv3d(in_channels, out_channels, 1)
+        else:
+            self.residual_conv = nn.Identity()
+            
+        self.activation = nn.SiLU()
+        self.dropout = nn.Dropout3d(dropout) if dropout > 0 else nn.Identity()
+        
+    def forward(self, x: torch.Tensor, time_emb: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass with time embedding injection.
+        
+        Args:
+            x: Input tensor of shape (batch, channels, depth, height, width)
+            time_emb: Time embedding of shape (batch, time_dim)
+            
+        Returns:
+            Output tensor with same spatial dimensions as input
+        """
+        residual = self.residual_conv(x)
+        
+        # First conv block
+        out = self.conv1(x)
+        out = self.norm1(out)
+        out = self.activation(out)
+        
+        # Inject time embedding
+        time_proj = self.time_proj(time_emb)
+        # Reshape time embedding to match spatial dimensions
+        time_proj = time_proj.view(time_proj.shape[0], time_proj.shape[1], 1, 1, 1)
+        out = out + time_proj
+        
+        # Second conv block
+        out = self.conv2(out)
+        out = self.norm2(out)
+        out = self.dropout(out)
+        
+        # Residual connection
+        out = out + residual
+        out = self.activation(out)
+        
+        return out
+
+
+class AttentionBlock3D(nn.Module):
+    """
+    3D Self-attention block for improved feature representation in U-Net.
+    
+    Implements multi-head self-attention adapted for 3D data, helping the model
+    capture long-range dependencies in the 3D structure.
+    """
+    
+    def __init__(self, channels: int, num_heads: int = 8, sparse: bool = False):
+        super().__init__()
+        self.channels = channels
+        self.num_heads = num_heads
+        self.sparse = sparse
+        
+        assert channels % num_heads == 0, "Channels must be divisible by num_heads"
+        self.head_dim = channels // num_heads
+        
+        # Choose normalization based on sparse mode
+        BatchNorm = SparseBatchNorm3d if sparse else nn.BatchNorm3d
+        self.norm = BatchNorm(channels)
+        
+        # Attention projections
+        self.to_qkv = nn.Conv3d(channels, channels * 3, 1)
+        self.to_out = nn.Conv3d(channels, channels, 1)
+        
+        self.scale = self.head_dim ** -0.5
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Apply 3D self-attention.
+        
+        Args:
+            x: Input tensor of shape (batch, channels, depth, height, width)
+            
+        Returns:
+            Attention-processed tensor of same shape
+        """
+        batch, channels, depth, height, width = x.shape
+        residual = x
+        
+        # Normalize input
+        x = self.norm(x)
+        
+        # Generate queries, keys, values
+        qkv = self.to_qkv(x)
+        q, k, v = qkv.chunk(3, dim=1)
+        
+        # Reshape for multi-head attention
+        q = q.view(batch, self.num_heads, self.head_dim, depth * height * width)
+        k = k.view(batch, self.num_heads, self.head_dim, depth * height * width)
+        v = v.view(batch, self.num_heads, self.head_dim, depth * height * width)
+        
+        # Compute attention
+        q = q.transpose(-2, -1)  # (batch, heads, spatial, head_dim)
+        k = k.transpose(-2, -1)
+        v = v.transpose(-2, -1)
+        
+        # Scaled dot-product attention
+        attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+        attn = F.softmax(attn, dim=-1)
+        
+        out = torch.matmul(attn, v)
+        out = out.transpose(-2, -1)  # (batch, heads, head_dim, spatial)
+        out = out.contiguous().view(batch, channels, depth, height, width)
+        
+        # Output projection
+        out = self.to_out(out)
+        
+        # Residual connection
+        return out + residual
+
+
+class UNet3DEncoder(nn.Module):
+    """
+    3D U-Net encoder with multi-scale feature extraction.
+    
+    The encoder progressively downsamples the input while increasing
+    the number of channels, capturing features at multiple scales.
+    """
+    
+    def __init__(self, in_channels: int, base_channels: int = 64, 
+                 time_dim: int = 256, num_levels: int = 4,
+                 sparse: bool = False, use_attention: bool = True):
+        super().__init__()
+        self.in_channels = in_channels
+        self.base_channels = base_channels
+        self.time_dim = time_dim
+        self.num_levels = num_levels
+        self.sparse = sparse
+        self.use_attention = use_attention
+        
+        # Initial convolution
+        Conv3d = SparseConv3d if sparse else nn.Conv3d
+        self.initial_conv = Conv3d(in_channels, base_channels, 3, padding=1)
+        
+        # Encoder levels
+        self.encoder_blocks = nn.ModuleList()
+        self.downsample_blocks = nn.ModuleList()
+        self.attention_blocks = nn.ModuleList()
+        
+        current_channels = base_channels
+        
+        for level in range(num_levels):
+            # Residual blocks for this level
+            blocks = nn.ModuleList([
+                ResidualBlock3D(current_channels, current_channels, time_dim, sparse=sparse),
+                ResidualBlock3D(current_channels, current_channels, time_dim, sparse=sparse)
+            ])
+            self.encoder_blocks.append(blocks)
+            
+            # Attention block (only at certain levels to manage computation)
+            if use_attention and level >= num_levels // 2:
+                self.attention_blocks.append(AttentionBlock3D(current_channels, sparse=sparse))
+            else:
+                self.attention_blocks.append(nn.Identity())
+            
+            # Downsampling (except for the last level)
+            if level < num_levels - 1:
+                next_channels = current_channels * 2
+                downsample = Conv3d(current_channels, next_channels, 3, stride=2, padding=1)
+                self.downsample_blocks.append(downsample)
+                current_channels = next_channels
+            else:
+                self.downsample_blocks.append(nn.Identity())
+                
+        self.final_channels = current_channels
+        
+    def forward(self, x: torch.Tensor, time_emb: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        """
+        Encode input through multiple scales.
+        
+        Args:
+            x: Input tensor of shape (batch, channels, depth, height, width)
+            time_emb: Time embedding of shape (batch, time_dim)
+            
+        Returns:
+            Tuple of (final_features, skip_connections)
+        """
+        # Initial convolution
+        x = self.initial_conv(x)
+        
+        skip_connections = []
+        
+        # Process through encoder levels
+        for level in range(self.num_levels):
+            # Apply residual blocks
+            for block in self.encoder_blocks[level]:
+                x = block(x, time_emb)
+            
+            # Apply attention if present
+            x = self.attention_blocks[level](x)
+            
+            # Store skip connection
+            skip_connections.append(x)
+            
+            # Downsample (except for last level)
+            if level < self.num_levels - 1:
+                x = self.downsample_blocks[level](x)
+                
+        return x, skip_connections
+
+
+class UNet3DDecoder(nn.Module):
+    """
+    3D U-Net decoder with skip connections and upsampling.
+    
+    The decoder progressively upsamples features while incorporating
+    skip connections from the encoder for detailed reconstruction.
+    """
+    
+    def __init__(self, encoder_channels: List[int], out_channels: int,
+                 time_dim: int = 256, sparse: bool = False, use_attention: bool = True):
+        super().__init__()
+        self.encoder_channels = encoder_channels
+        self.out_channels = out_channels
+        self.time_dim = time_dim
+        self.sparse = sparse
+        self.use_attention = use_attention
+        
+        # Choose layer types based on sparse mode
+        Conv3d = SparseConv3d if sparse else nn.Conv3d
+        ConvTranspose3d = SparseConvTranspose3d if sparse else nn.ConvTranspose3d
+        
+        # Decoder levels (reverse order of encoder)
+        self.decoder_blocks = nn.ModuleList()
+        self.upsample_blocks = nn.ModuleList()
+        self.attention_blocks = nn.ModuleList()
+        self.skip_conv_blocks = nn.ModuleList()
+        
+        # Reverse the channel list for decoder
+        decoder_channels = encoder_channels[::-1]
+        
+        for level in range(len(decoder_channels) - 1):
+            current_channels = decoder_channels[level]
+            next_channels = decoder_channels[level + 1]
+            skip_channels = next_channels  # Skip connection from encoder
+            
+            # Skip connection processing
+            skip_conv = Conv3d(skip_channels, next_channels, 1)
+            self.skip_conv_blocks.append(skip_conv)
+            
+            # Upsampling
+            upsample = ConvTranspose3d(current_channels, next_channels, 3, stride=2, padding=1, output_padding=1)
+            self.upsample_blocks.append(upsample)
+            
+            # Residual blocks after concatenation
+            concat_channels = next_channels * 2  # Upsampled + skip connection
+            blocks = nn.ModuleList([
+                ResidualBlock3D(concat_channels, next_channels, time_dim, sparse=sparse),
+                ResidualBlock3D(next_channels, next_channels, time_dim, sparse=sparse)
+            ])
+            self.decoder_blocks.append(blocks)
+            
+            # Attention blocks (at certain levels)
+            if use_attention and level < len(decoder_channels) // 2:
+                self.attention_blocks.append(AttentionBlock3D(next_channels, sparse=sparse))
+            else:
+                self.attention_blocks.append(nn.Identity())
+        
+        # Final output convolution
+        final_channels = decoder_channels[-1]
+        self.final_conv = Conv3d(final_channels, out_channels, 3, padding=1)
+        
+    def forward(self, x: torch.Tensor, skip_connections: List[torch.Tensor], 
+                time_emb: torch.Tensor) -> torch.Tensor:
+        """
+        Decode features with skip connections.
+        
+        Args:
+            x: Encoded features from encoder
+            skip_connections: List of skip connection tensors from encoder
+            time_emb: Time embedding of shape (batch, time_dim)
+            
+        Returns:
+            Decoded output tensor
+        """
+        # Reverse skip connections to match decoder order
+        skip_connections = skip_connections[::-1][1:]  # Exclude the deepest level
+        
+        for level in range(len(self.decoder_blocks)):
+            # Upsample current features
+            x = self.upsample_blocks[level](x)
+            
+            # Process skip connection
+            skip = skip_connections[level]
+            skip = self.skip_conv_blocks[level](skip)
+            
+            # Ensure spatial dimensions match before concatenation
+            if x.shape[2:] != skip.shape[2:]:
+                # Resize skip connection to match upsampled features
+                skip = F.interpolate(skip, size=x.shape[2:], mode='trilinear', align_corners=False)
+            
+            # Concatenate upsampled features with skip connection
+            x = torch.cat([x, skip], dim=1)
+            
+            # Apply residual blocks
+            for block in self.decoder_blocks[level]:
+                x = block(x, time_emb)
+            
+            # Apply attention if present
+            x = self.attention_blocks[level](x)
+        
+        # Final output convolution
+        x = self.final_conv(x)
+        
+        return x
+
+
+class UNet3D(nn.Module):
+    """
+    Complete 3D U-Net architecture for diffusion models.
+    
+    This model combines the encoder and decoder with time embedding
+    and optional conditioning for controlled 3D generation.
+    """
+    
+    def __init__(self, in_channels: int = 4, out_channels: int = 4,
+                 base_channels: int = 64, time_dim: int = 256,
+                 num_levels: int = 4, sparse: bool = False,
+                 use_attention: bool = True, condition_dim: Optional[int] = None):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.base_channels = base_channels
+        self.time_dim = time_dim
+        self.num_levels = num_levels
+        self.sparse = sparse
+        self.use_attention = use_attention
+        self.condition_dim = condition_dim
+        
+        # Time embedding
+        self.time_embedding = TimeEmbedding(time_dim, time_dim)
+        
+        # Conditioning embedding (optional)
+        if condition_dim is not None:
+            self.condition_embedding = nn.Sequential(
+                nn.Linear(condition_dim, time_dim),
+                nn.SiLU(),
+                nn.Linear(time_dim, time_dim)
+            )
+        else:
+            self.condition_embedding = None
+        
+        # Calculate encoder channel progression
+        encoder_channels = [base_channels * (2 ** i) for i in range(num_levels)]
+        encoder_channels[0] = base_channels  # First level uses base channels
+        
+        # Encoder
+        self.encoder = UNet3DEncoder(
+            in_channels=in_channels,
+            base_channels=base_channels,
+            time_dim=time_dim,
+            num_levels=num_levels,
+            sparse=sparse,
+            use_attention=use_attention
+        )
+        
+        # Decoder
+        self.decoder = UNet3DDecoder(
+            encoder_channels=encoder_channels,
+            out_channels=out_channels,
+            time_dim=time_dim,
+            sparse=sparse,
+            use_attention=use_attention
+        )
+        
+        # Initialize weights
+        self.apply(self._init_weights)
+        
+    def _init_weights(self, module):
+        """Initialize model weights."""
+        if isinstance(module, (nn.Conv3d, nn.ConvTranspose3d, nn.Linear)):
+            nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, (nn.BatchNorm3d, nn.GroupNorm)):
+            nn.init.ones_(module.weight)
+            nn.init.zeros_(module.bias)
+    
+    def forward(self, x: torch.Tensor, timesteps: torch.Tensor,
+                condition: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Forward pass of the 3D U-Net.
+        
+        Args:
+            x: Input tensor of shape (batch, channels, depth, height, width)
+            timesteps: Timestep tensor of shape (batch,)
+            condition: Optional conditioning tensor of shape (batch, condition_dim)
+            
+        Returns:
+            Output tensor of same spatial shape as input
+        """
+        # Process time embedding
+        time_emb = self.time_embedding(timesteps)
+        
+        # Add conditioning if provided
+        if condition is not None and self.condition_embedding is not None:
+            condition_emb = self.condition_embedding(condition)
+            time_emb = time_emb + condition_emb
+        
+        # Encode
+        encoded_features, skip_connections = self.encoder(x, time_emb)
+        
+        # Decode
+        output = self.decoder(encoded_features, skip_connections, time_emb)
+        
+        return output
+    
+    def get_memory_usage(self) -> Dict[str, Any]:
+        """Get memory usage statistics for the model."""
+        total_params = sum(p.numel() for p in self.parameters())
+        trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        
+        # Estimate memory usage (rough approximation)
+        param_memory = total_params * 4  # 4 bytes per float32 parameter
+        
+        return {
+            "total_parameters": total_params,
+            "trainable_parameters": trainable_params,
+            "estimated_param_memory_mb": param_memory / (1024 * 1024),
+            "sparse_mode": self.sparse,
+            "attention_enabled": self.use_attention,
+            "num_levels": self.num_levels,
+            "base_channels": self.base_channels
+        }
+    
+    def optimize_for_resolution(self, target_resolution: int):
+        """
+        Optimize model architecture for target resolution.
+        
+        Args:
+            target_resolution: Target 3D resolution (e.g., 64 for 64x64x64)
+        """
+        # Calculate optimal number of levels based on resolution
+        optimal_levels = int(math.log2(target_resolution)) - 2  # Leave room for base resolution
+        optimal_levels = max(3, min(6, optimal_levels))  # Clamp between 3 and 6
+        
+        if optimal_levels != self.num_levels:
+            print(f"Recommended num_levels for resolution {target_resolution}: {optimal_levels}")
+            print(f"Current num_levels: {self.num_levels}")
+        
+        # Calculate optimal base channels
+        # Higher resolution needs more channels for detail capture
+        if target_resolution >= 128:
+            recommended_base = 32
+        elif target_resolution >= 64:
+            recommended_base = 64
+        else:
+            recommended_base = 128
+            
+        if recommended_base != self.base_channels:
+            print(f"Recommended base_channels for resolution {target_resolution}: {recommended_base}")
+            print(f"Current base_channels: {self.base_channels}")
+    
+    def enable_gradient_checkpointing(self):
+        """Enable gradient checkpointing to save memory during training."""
+        def checkpoint_forward(module):
+            if hasattr(module, 'forward'):
+                original_forward = module.forward
+                def checkpointed_forward(*args, **kwargs):
+                    return torch.utils.checkpoint.checkpoint(original_forward, *args, **kwargs)
+                module.forward = checkpointed_forward
+        
+        # Apply to encoder and decoder blocks
+        for block in self.encoder.encoder_blocks:
+            for subblock in block:
+                checkpoint_forward(subblock)
+        
+        for block in self.decoder.decoder_blocks:
+            for subblock in block:
+                checkpoint_forward(subblock)
+
+
+# ============================================================================
+# Advanced Conditioning Mechanisms
+# ============================================================================
+
+class CrossAttentionBlock3D(nn.Module):
+    """
+    3D Cross-attention block for conditioning on external features.
+    
+    This allows the model to attend to conditioning information
+    such as text embeddings, parameter vectors, or other modalities.
+    """
+    
+    def __init__(self, channels: int, condition_dim: int, num_heads: int = 8, sparse: bool = False):
+        super().__init__()
+        self.channels = channels
+        self.condition_dim = condition_dim
+        self.num_heads = num_heads
+        self.sparse = sparse
+        
+        assert channels % num_heads == 0, "Channels must be divisible by num_heads"
+        self.head_dim = channels // num_heads
+        
+        # Choose normalization based on sparse mode
+        BatchNorm = SparseBatchNorm3d if sparse else nn.BatchNorm3d
+        self.norm_x = BatchNorm(channels)
+        self.norm_condition = nn.LayerNorm(condition_dim)
+        
+        # Attention projections
+        self.to_q = nn.Conv3d(channels, channels, 1)
+        self.to_k = nn.Linear(condition_dim, channels)
+        self.to_v = nn.Linear(condition_dim, channels)
+        self.to_out = nn.Conv3d(channels, channels, 1)
+        
+        self.scale = self.head_dim ** -0.5
+        
+    def forward(self, x: torch.Tensor, condition: torch.Tensor) -> torch.Tensor:
+        """
+        Apply cross-attention between 3D features and conditioning.
+        
+        Args:
+            x: Input tensor of shape (batch, channels, depth, height, width)
+            condition: Conditioning tensor of shape (batch, seq_len, condition_dim)
+            
+        Returns:
+            Cross-attention processed tensor of same shape as x
+        """
+        batch, channels, depth, height, width = x.shape
+        residual = x
+        
+        # Normalize inputs
+        x = self.norm_x(x)
+        condition = self.norm_condition(condition)
+        
+        # Generate queries from spatial features
+        q = self.to_q(x)
+        q = q.view(batch, self.num_heads, self.head_dim, depth * height * width)
+        q = q.transpose(-2, -1)  # (batch, heads, spatial, head_dim)
+        
+        # Generate keys and values from conditioning
+        k = self.to_k(condition)  # (batch, seq_len, channels)
+        v = self.to_v(condition)
+        
+        k = k.view(batch, -1, self.num_heads, self.head_dim).transpose(1, 2)  # (batch, heads, seq_len, head_dim)
+        v = v.view(batch, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        
+        # Compute cross-attention
+        attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+        attn = F.softmax(attn, dim=-1)
+        
+        out = torch.matmul(attn, v)  # (batch, heads, spatial, head_dim)
+        out = out.transpose(-2, -1).contiguous()  # (batch, heads, head_dim, spatial)
+        out = out.view(batch, channels, depth, height, width)
+        
+        # Output projection
+        out = self.to_out(out)
+        
+        # Residual connection
+        return out + residual
+
+
+class MultiModalConditioner(nn.Module):
+    """
+    Multi-modal conditioning system supporting various input types.
+    
+    This module can handle different types of conditioning inputs:
+    - Text embeddings
+    - Parameter vectors (shape, material properties, etc.)
+    - Image conditioning
+    - Categorical labels
+    """
+    
+    def __init__(self, time_dim: int = 256, text_dim: int = 512, 
+                 param_dim: int = 64, image_channels: int = 3,
+                 num_categories: int = 10):
+        super().__init__()
+        self.time_dim = time_dim
+        self.text_dim = text_dim
+        self.param_dim = param_dim
+        self.image_channels = image_channels
+        self.num_categories = num_categories
+        
+        # Text conditioning
+        self.text_processor = nn.Sequential(
+            nn.Linear(text_dim, time_dim),
+            nn.SiLU(),
+            nn.Linear(time_dim, time_dim)
+        )
+        
+        # Parameter conditioning
+        self.param_processor = nn.Sequential(
+            nn.Linear(param_dim, time_dim // 2),
+            nn.SiLU(),
+            nn.Linear(time_dim // 2, time_dim)
+        )
+        
+        # Image conditioning (for 2D reference images)
+        self.image_processor = nn.Sequential(
+            nn.Conv2d(image_channels, 32, 3, padding=1),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((8, 8)),
+            nn.Flatten(),
+            nn.Linear(32 * 8 * 8, time_dim)
+        )
+        
+        # Category conditioning
+        self.category_embedding = nn.Embedding(num_categories, time_dim)
+        
+        # Fusion layer
+        self.fusion = nn.Sequential(
+            nn.Linear(time_dim * 4, time_dim * 2),
+            nn.SiLU(),
+            nn.Linear(time_dim * 2, time_dim)
+        )
+        
+    def forward(self, text_emb: Optional[torch.Tensor] = None,
+                params: Optional[torch.Tensor] = None,
+                image: Optional[torch.Tensor] = None,
+                category: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Process multiple conditioning modalities.
+        
+        Args:
+            text_emb: Text embeddings of shape (batch, text_dim)
+            params: Parameter vector of shape (batch, param_dim)
+            image: Reference image of shape (batch, channels, height, width)
+            category: Category indices of shape (batch,)
+            
+        Returns:
+            Fused conditioning embedding of shape (batch, time_dim)
+        """
+        batch_size = None
+        conditions = []
+        
+        # Process text conditioning
+        if text_emb is not None:
+            batch_size = text_emb.shape[0]
+            text_cond = self.text_processor(text_emb)
+            conditions.append(text_cond)
+        else:
+            if batch_size is None:
+                raise ValueError("At least one conditioning input must be provided")
+            conditions.append(torch.zeros(batch_size, self.time_dim, device=text_emb.device if text_emb is not None else 'cpu'))
+        
+        # Process parameter conditioning
+        if params is not None:
+            if batch_size is None:
+                batch_size = params.shape[0]
+            param_cond = self.param_processor(params)
+            conditions.append(param_cond)
+        else:
+            device = conditions[0].device if conditions else 'cpu'
+            conditions.append(torch.zeros(batch_size, self.time_dim, device=device))
+        
+        # Process image conditioning
+        if image is not None:
+            if batch_size is None:
+                batch_size = image.shape[0]
+            image_cond = self.image_processor(image)
+            conditions.append(image_cond)
+        else:
+            device = conditions[0].device if conditions else 'cpu'
+            conditions.append(torch.zeros(batch_size, self.time_dim, device=device))
+        
+        # Process category conditioning
+        if category is not None:
+            if batch_size is None:
+                batch_size = category.shape[0]
+            cat_cond = self.category_embedding(category)
+            conditions.append(cat_cond)
+        else:
+            device = conditions[0].device if conditions else 'cpu'
+            conditions.append(torch.zeros(batch_size, self.time_dim, device=device))
+        
+        # Fuse all conditions
+        fused_condition = torch.cat(conditions, dim=-1)
+        fused_condition = self.fusion(fused_condition)
+        
+        return fused_condition
+
+
+class ConditionalUNet3D(UNet3D):
+    """
+    Enhanced 3D U-Net with advanced conditioning capabilities.
+    
+    This extends the base U-Net with cross-attention mechanisms
+    and multi-modal conditioning support.
+    """
+    
+    def __init__(self, in_channels: int = 4, out_channels: int = 4,
+                 base_channels: int = 64, time_dim: int = 256,
+                 num_levels: int = 4, sparse: bool = False,
+                 use_attention: bool = True, use_cross_attention: bool = True,
+                 text_dim: int = 512, param_dim: int = 64,
+                 image_channels: int = 3, num_categories: int = 10):
+        super().__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            base_channels=base_channels,
+            time_dim=time_dim,
+            num_levels=num_levels,
+            sparse=sparse,
+            use_attention=use_attention,
+            condition_dim=None  # We'll handle conditioning differently
+        )
+        
+        self.use_cross_attention = use_cross_attention
+        
+        # Multi-modal conditioner
+        self.multi_modal_conditioner = MultiModalConditioner(
+            time_dim=time_dim,
+            text_dim=text_dim,
+            param_dim=param_dim,
+            image_channels=image_channels,
+            num_categories=num_categories
+        )
+        
+        # Cross-attention blocks (add to encoder and decoder)
+        if use_cross_attention:
+            self.encoder_cross_attn = nn.ModuleList()
+            self.decoder_cross_attn = nn.ModuleList()
+            
+            # Add cross-attention to encoder
+            encoder_channels = [base_channels * (2 ** i) for i in range(num_levels)]
+            for channels in encoder_channels:
+                self.encoder_cross_attn.append(
+                    CrossAttentionBlock3D(channels, time_dim, sparse=sparse)
+                )
+            
+            # Add cross-attention to decoder
+            decoder_channels = encoder_channels[::-1][1:]  # Reverse and exclude deepest
+            for channels in decoder_channels:
+                self.decoder_cross_attn.append(
+                    CrossAttentionBlock3D(channels, time_dim, sparse=sparse)
+                )
+        
+    def forward(self, x: torch.Tensor, timesteps: torch.Tensor,
+                text_emb: Optional[torch.Tensor] = None,
+                params: Optional[torch.Tensor] = None,
+                image: Optional[torch.Tensor] = None,
+                category: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Forward pass with multi-modal conditioning.
+        
+        Args:
+            x: Input tensor of shape (batch, channels, depth, height, width)
+            timesteps: Timestep tensor of shape (batch,)
+            text_emb: Text embeddings of shape (batch, text_dim)
+            params: Parameter vector of shape (batch, param_dim)
+            image: Reference image of shape (batch, channels, height, width)
+            category: Category indices of shape (batch,)
+            
+        Returns:
+            Output tensor of same spatial shape as input
+        """
+        # Process time embedding
+        time_emb = self.time_embedding(timesteps)
+        
+        # Process multi-modal conditioning
+        if any(cond is not None for cond in [text_emb, params, image, category]):
+            condition_emb = self.multi_modal_conditioner(text_emb, params, image, category)
+            time_emb = time_emb + condition_emb
+            
+            # Prepare conditioning for cross-attention
+            # Expand conditioning to sequence format for cross-attention
+            condition_seq = condition_emb.unsqueeze(1)  # (batch, 1, time_dim)
+        else:
+            condition_seq = None
+        
+        # Encode with cross-attention
+        x = self.encoder.initial_conv(x)
+        skip_connections = []
+        
+        for level in range(self.encoder.num_levels):
+            # Apply residual blocks
+            for block in self.encoder.encoder_blocks[level]:
+                x = block(x, time_emb)
+            
+            # Apply self-attention
+            x = self.encoder.attention_blocks[level](x)
+            
+            # Apply cross-attention if enabled and conditioning is available
+            if self.use_cross_attention and condition_seq is not None and level < len(self.encoder_cross_attn):
+                x = self.encoder_cross_attn[level](x, condition_seq)
+            
+            # Store skip connection
+            skip_connections.append(x)
+            
+            # Downsample (except for last level)
+            if level < self.encoder.num_levels - 1:
+                x = self.encoder.downsample_blocks[level](x)
+        
+        # Decode with cross-attention
+        skip_connections = skip_connections[::-1][1:]  # Reverse and exclude deepest
+        
+        for level in range(len(self.decoder.decoder_blocks)):
+            # Upsample current features
+            x = self.decoder.upsample_blocks[level](x)
+            
+            # Process skip connection
+            skip = skip_connections[level]
+            skip = self.decoder.skip_conv_blocks[level](skip)
+            
+            # Concatenate upsampled features with skip connection
+            x = torch.cat([x, skip], dim=1)
+            
+            # Apply residual blocks
+            for block in self.decoder.decoder_blocks[level]:
+                x = block(x, time_emb)
+            
+            # Apply self-attention
+            x = self.decoder.attention_blocks[level](x)
+            
+            # Apply cross-attention if enabled and conditioning is available
+            if self.use_cross_attention and condition_seq is not None and level < len(self.decoder_cross_attn):
+                x = self.decoder_cross_attn[level](x, condition_seq)
+        
+        # Final output convolution
+        x = self.decoder.final_conv(x)
+        
+        return x
 
 # ============================================================================
 # DISCRIMINATOR MODELS
@@ -1852,8 +2772,7 @@ class ModelUtils:
             "size_ratio": size2 / size1 if size1 > 0 else float('inf')
         }
 
-# ====
-========================================================================
+# ============================================================================
 # ADDITIONAL SPARSE-AWARE LAYERS
 # ============================================================================
 
@@ -2320,8 +3239,7 @@ def analyze_model_sparsity(model: nn.Module, sample_input: torch.Tensor) -> Dict
     }
     
     return summary
-# ==
-==========================================================================
+# ============================================================================
 # ADVANCED SPARSE 3D CONVOLUTION LAYERS
 # ============================================================================
 
@@ -2932,8 +3850,9 @@ def benchmark_sparse_convolutions(input_tensor: torch.Tensor,
         else:
             results[layer_name]["output_sparsity"] = (output == 0).float().mean().item()
     
-    return results# ========
-====================================================================
+    return results
+
+# ============================================================================
 # ADVANCED SPARSE NORMALIZATION AND ACTIVATION LAYERS
 # ============================================================================
 
