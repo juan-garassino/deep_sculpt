@@ -1,0 +1,562 @@
+"""
+Diffusion trainer for DeepSculpt PyTorch implementation.
+
+This module provides specialized training infrastructure for diffusion models
+with support for various prediction types, conditioning, and advanced sampling techniques.
+"""
+
+import os
+import time
+import logging
+from typing import Dict, Any, Optional, Tuple, List, Union, Callable
+from dataclasses import dataclass
+from pathlib import Path
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.cuda.amp import GradScaler, autocast
+from torch.utils.data import DataLoader
+
+import numpy as np
+from datetime import datetime
+
+from .base_trainer import BaseTrainer, TrainingConfig
+from .training_metrics import TrainingMetrics
+from ..models.diffusion.noise_scheduler import NoiseScheduler
+from ..models.diffusion.pipeline import Diffusion3DPipeline
+
+
+class DiffusionTrainer(BaseTrainer):
+    """
+    Specialized trainer for diffusion models.
+    
+    Features:
+    - Multiple prediction types (epsilon, sample, v_prediction)
+    - Classifier-free guidance training
+    - EMA model for better sample quality
+    - Advanced loss functions and sampling techniques
+    - Conditioning support
+    """
+    
+    def __init__(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        config: TrainingConfig,
+        noise_scheduler: NoiseScheduler,
+        scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
+        device: str = "cuda",
+        prediction_type: str = "epsilon",  # "epsilon", "sample", "v_prediction"
+        conditioning_key: Optional[str] = None,
+        conditioning_dropout: float = 0.1,
+        use_ema: bool = True,
+        ema_decay: float = 0.9999,
+        loss_type: str = "mse"  # "mse", "l1", "huber"
+    ):
+        """
+        Initialize diffusion trainer.
+        
+        Args:
+            model: Diffusion model (e.g., UNet3D)
+            optimizer: Model optimizer
+            config: Training configuration
+            noise_scheduler: Noise scheduler for diffusion process
+            scheduler: Learning rate scheduler
+            device: Device for training
+            prediction_type: Type of model prediction
+            conditioning_key: Key for conditioning information in data
+            conditioning_dropout: Dropout rate for classifier-free guidance
+            use_ema: Whether to use EMA model
+            ema_decay: EMA decay rate
+            loss_type: Type of loss function
+        """
+        super().__init__(model, optimizer, config, scheduler, device)
+        
+        self.noise_scheduler = noise_scheduler
+        self.prediction_type = prediction_type
+        self.conditioning_key = conditioning_key
+        self.conditioning_dropout = conditioning_dropout
+        self.use_ema = use_ema
+        self.ema_decay = ema_decay
+        self.loss_type = loss_type
+        
+        # Diffusion-specific metrics
+        self.metrics.update({
+            'diffusion_loss': [],
+            'mse_loss': [],
+            'l1_loss': [],
+            'perceptual_loss': [],
+            'timestep_loss': {},  # Loss per timestep
+            'conditioning_accuracy': []
+        })
+        
+        # EMA model for better sample quality
+        self.ema_model = self._create_ema_model() if use_ema else None
+        
+        # Create diffusion pipeline for sampling
+        self.pipeline = Diffusion3DPipeline(
+            model=self.ema_model if self.ema_model else self.model,
+            noise_scheduler=noise_scheduler,
+            device=device,
+            prediction_type=prediction_type
+        )
+        
+        # Initialize metrics tracker
+        self.metrics_tracker = TrainingMetrics()
+        
+        self.logger.info(f"Diffusion trainer initialized with {prediction_type} prediction")
+    
+    def _create_ema_model(self) -> nn.Module:
+        """Create EMA version of the model."""
+        try:
+            # Try to create a copy of the model
+            ema_model = type(self.model)(**self.model.init_kwargs)
+        except:
+            # Fallback: create a deep copy
+            import copy
+            ema_model = copy.deepcopy(self.model)
+        
+        ema_model.load_state_dict(self.model.state_dict())
+        ema_model.eval()
+        ema_model = ema_model.to(self.device)
+        return ema_model
+    
+    def _update_ema_model(self):
+        """Update EMA model parameters."""
+        if self.ema_model is None:
+            return
+        
+        with torch.no_grad():
+            for ema_param, param in zip(self.ema_model.parameters(), self.model.parameters()):
+                ema_param.data.mul_(self.ema_decay).add_(param.data, alpha=1 - self.ema_decay)
+    
+    def compute_loss(
+        self,
+        model_output: torch.Tensor,
+        target: torch.Tensor,
+        timesteps: torch.Tensor,
+        sample: torch.Tensor,
+        conditioning: Optional[torch.Tensor] = None
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Compute diffusion loss based on prediction type.
+        
+        Args:
+            model_output: Model prediction
+            target: Target tensor
+            timesteps: Timesteps for each sample
+            sample: Original sample
+            conditioning: Optional conditioning information
+            
+        Returns:
+            Dictionary of computed losses
+        """
+        losses = {}
+        
+        # Main loss based on prediction type
+        if self.loss_type == "mse":
+            main_loss = F.mse_loss(model_output, target)
+        elif self.loss_type == "l1":
+            main_loss = F.l1_loss(model_output, target)
+        elif self.loss_type == "huber":
+            main_loss = F.huber_loss(model_output, target)
+        else:
+            raise ValueError(f"Unknown loss type: {self.loss_type}")
+        
+        losses['diffusion_loss'] = main_loss
+        losses['mse_loss'] = F.mse_loss(model_output, target)
+        losses['l1_loss'] = F.l1_loss(model_output, target)
+        
+        # Timestep-specific losses for analysis
+        unique_timesteps = torch.unique(timesteps)
+        for t in unique_timesteps:
+            mask = timesteps == t
+            if mask.any():
+                t_loss = F.mse_loss(model_output[mask], target[mask])
+                losses[f'timestep_{t.item()}_loss'] = t_loss
+        
+        # Conditioning accuracy if applicable
+        if conditioning is not None and hasattr(self.model, 'conditioning_accuracy'):
+            cond_acc = self.model.conditioning_accuracy(model_output, conditioning)
+            losses['conditioning_accuracy'] = cond_acc
+        
+        return losses
+    
+    def train_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
+        """
+        Execute a single training step.
+        
+        Args:
+            batch: Batch of training data
+            
+        Returns:
+            Dictionary of step metrics
+        """
+        # Extract data from batch
+        if isinstance(batch, dict):
+            x_0 = batch.get('data', batch.get('structure', batch.get('x', None)))
+            conditioning = batch.get(self.conditioning_key) if self.conditioning_key else None
+        else:
+            x_0 = batch
+            conditioning = None
+        
+        if x_0 is None:
+            raise ValueError("Could not find data in batch")
+        
+        x_0 = x_0.to(self.device)
+        if conditioning is not None:
+            conditioning = conditioning.to(self.device)
+        
+        batch_size = x_0.shape[0]
+        
+        # Sample random timesteps
+        timesteps = torch.randint(
+            0, self.noise_scheduler.timesteps, (batch_size,), device=self.device, dtype=torch.long
+        )
+        
+        # Add noise to samples
+        noise = torch.randn_like(x_0)
+        x_t = self.noise_scheduler.add_noise(x_0, noise, timesteps)
+        
+        # Apply conditioning dropout for classifier-free guidance
+        if conditioning is not None and self.conditioning_dropout > 0:
+            dropout_mask = torch.rand(batch_size, device=self.device) < self.conditioning_dropout
+            conditioning = conditioning.clone()
+            conditioning[dropout_mask] = 0  # Zero out conditioning for dropped samples
+        
+        # Forward pass
+        self.optimizer.zero_grad()
+        
+        if self.config.mixed_precision:
+            with autocast():
+                # Get model prediction
+                if conditioning is not None:
+                    model_output = self.model(x_t, timesteps, conditioning)
+                else:
+                    model_output = self.model(x_t, timesteps)
+                
+                # Compute target based on prediction type
+                if self.prediction_type == "epsilon":
+                    target = noise
+                elif self.prediction_type == "sample":
+                    target = x_0
+                elif self.prediction_type == "v_prediction":
+                    target = self.noise_scheduler.get_velocity(x_0, noise, timesteps)
+                else:
+                    raise ValueError(f"Unknown prediction type: {self.prediction_type}")
+                
+                # Compute losses
+                losses = self.compute_loss(model_output, target, timesteps, x_0, conditioning)
+                loss = losses['diffusion_loss']
+            
+            # Backward pass with mixed precision
+            self.scaler.scale(loss).backward()
+            
+            if self.config.gradient_clip > 0:
+                self.scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip)
+            
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            # Get model prediction
+            if conditioning is not None:
+                model_output = self.model(x_t, timesteps, conditioning)
+            else:
+                model_output = self.model(x_t, timesteps)
+            
+            # Compute target based on prediction type
+            if self.prediction_type == "epsilon":
+                target = noise
+            elif self.prediction_type == "sample":
+                target = x_0
+            elif self.prediction_type == "v_prediction":
+                target = self.noise_scheduler.get_velocity(x_0, noise, timesteps)
+            else:
+                raise ValueError(f"Unknown prediction type: {self.prediction_type}")
+            
+            # Compute losses
+            losses = self.compute_loss(model_output, target, timesteps, x_0, conditioning)
+            loss = losses['diffusion_loss']
+            
+            # Backward pass
+            loss.backward()
+            
+            if self.config.gradient_clip > 0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip)
+            
+            self.optimizer.step()
+        
+        # Update EMA model
+        if self.ema_model is not None:
+            self._update_ema_model()
+        
+        # Convert losses to float for logging
+        step_metrics = {key: value.item() if torch.is_tensor(value) else value 
+                       for key, value in losses.items()}
+        
+        # Update metrics tracker
+        self.metrics_tracker.update_step_metrics(step_metrics)
+        
+        return step_metrics
+    
+    def train_epoch(self, dataloader: DataLoader) -> Dict[str, float]:
+        """
+        Train for one epoch.
+        
+        Args:
+            dataloader: Training data loader
+            
+        Returns:
+            Dictionary of epoch metrics
+        """
+        self.model.train()
+        
+        epoch_metrics = {
+            'diffusion_loss': [],
+            'mse_loss': [],
+            'l1_loss': []
+        }
+        
+        for batch_idx, batch in enumerate(dataloader):
+            # Training step
+            step_metrics = self.train_step(batch)
+            
+            # Accumulate metrics
+            for key, value in step_metrics.items():
+                if key in epoch_metrics:
+                    epoch_metrics[key].append(value)
+                elif key.startswith('timestep_'):
+                    # Handle timestep-specific losses
+                    if key not in epoch_metrics:
+                        epoch_metrics[key] = []
+                    epoch_metrics[key].append(value)
+            
+            # Log step metrics
+            if batch_idx % self.config.log_freq == 0:
+                self.log_metrics(step_metrics, self.global_step, "train_step")
+                self.logger.info(
+                    f"Epoch {self.current_epoch}, Batch {batch_idx}: "
+                    f"Diffusion Loss: {step_metrics.get('diffusion_loss', 0):.4f}, "
+                    f"MSE Loss: {step_metrics.get('mse_loss', 0):.4f}"
+                )
+            
+            self.global_step += 1
+        
+        # Calculate epoch averages
+        avg_metrics = {}
+        for key, values in epoch_metrics.items():
+            if values:  # Only include metrics that have values
+                avg_metrics[key] = np.mean(values)
+        
+        # Update learning rate scheduler
+        if self.scheduler:
+            self.scheduler.step()
+        
+        # Update metrics tracker
+        self.metrics_tracker.update_epoch_metrics(avg_metrics)
+        
+        return avg_metrics
+    
+    def validate(self, dataloader: DataLoader) -> Dict[str, float]:
+        """
+        Validate the model.
+        
+        Args:
+            dataloader: Validation data loader
+            
+        Returns:
+            Dictionary of validation metrics
+        """
+        self.model.eval()
+        
+        val_metrics = {
+            'diffusion_loss': [],
+            'mse_loss': [],
+            'l1_loss': []
+        }
+        
+        with torch.no_grad():
+            for batch in dataloader:
+                # Extract data from batch
+                if isinstance(batch, dict):
+                    x_0 = batch.get('data', batch.get('structure', batch.get('x', None)))
+                    conditioning = batch.get(self.conditioning_key) if self.conditioning_key else None
+                else:
+                    x_0 = batch
+                    conditioning = None
+                
+                if x_0 is None:
+                    continue
+                
+                x_0 = x_0.to(self.device)
+                if conditioning is not None:
+                    conditioning = conditioning.to(self.device)
+                
+                batch_size = x_0.shape[0]
+                
+                # Sample random timesteps
+                timesteps = torch.randint(
+                    0, self.noise_scheduler.timesteps, (batch_size,), device=self.device, dtype=torch.long
+                )
+                
+                # Add noise to samples
+                noise = torch.randn_like(x_0)
+                x_t = self.noise_scheduler.add_noise(x_0, noise, timesteps)
+                
+                # Get model prediction
+                if conditioning is not None:
+                    model_output = self.model(x_t, timesteps, conditioning)
+                else:
+                    model_output = self.model(x_t, timesteps)
+                
+                # Compute target based on prediction type
+                if self.prediction_type == "epsilon":
+                    target = noise
+                elif self.prediction_type == "sample":
+                    target = x_0
+                elif self.prediction_type == "v_prediction":
+                    target = self.noise_scheduler.get_velocity(x_0, noise, timesteps)
+                
+                # Compute losses
+                losses = self.compute_loss(model_output, target, timesteps, x_0, conditioning)
+                
+                # Accumulate validation metrics
+                for key, value in losses.items():
+                    if key in val_metrics:
+                        val_metrics[key].append(value.item() if torch.is_tensor(value) else value)
+        
+        return {key: np.mean(values) for key, values in val_metrics.items() if values}
+    
+    def sample_and_log(self, num_samples: int = 8, conditioning: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        Generate samples and log them.
+        
+        Args:
+            num_samples: Number of samples to generate
+            conditioning: Optional conditioning information
+            
+        Returns:
+            Generated samples
+        """
+        # Use EMA model if available
+        model_to_use = self.ema_model if self.ema_model else self.model
+        
+        # Update pipeline model
+        self.pipeline.model = model_to_use
+        
+        # Generate samples
+        shape = (num_samples, 64, 64, 64, 6)  # Default shape, should be configurable
+        samples = self.pipeline.sample(
+            shape=shape,
+            conditioning=conditioning,
+            num_inference_steps=50
+        )
+        
+        return samples
+    
+    def save_checkpoint(self, path: str, epoch: int, metrics: Dict[str, float], is_best: bool = False):
+        """
+        Save diffusion training checkpoint.
+        
+        Args:
+            path: Path to save checkpoint
+            epoch: Current epoch
+            metrics: Current metrics
+            is_best: Whether this is the best checkpoint
+        """
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        
+        checkpoint = {
+            'epoch': epoch,
+            'global_step': self.global_step,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'metrics': metrics,
+            'config': self.config,
+            'best_loss': self.best_loss,
+            'prediction_type': self.prediction_type,
+            'conditioning_key': self.conditioning_key,
+            'conditioning_dropout': self.conditioning_dropout,
+            'loss_type': self.loss_type,
+            'noise_scheduler_state': {
+                'schedule_type': self.noise_scheduler.schedule_type,
+                'timesteps': self.noise_scheduler.timesteps,
+                'beta_start': self.noise_scheduler.beta_start,
+                'beta_end': self.noise_scheduler.beta_end,
+            }
+        }
+        
+        if self.scheduler:
+            checkpoint['scheduler_state_dict'] = self.scheduler.state_dict()
+        
+        if self.scaler:
+            checkpoint['scaler_state_dict'] = self.scaler.state_dict()
+        
+        if self.ema_model:
+            checkpoint['ema_model_state_dict'] = self.ema_model.state_dict()
+            checkpoint['ema_decay'] = self.ema_decay
+        
+        torch.save(checkpoint, path)
+        
+        if is_best:
+            best_path = path.replace('.pth', '_best.pth')
+            torch.save(checkpoint, best_path)
+        
+        self.logger.info(f"Diffusion checkpoint saved: {path}")
+    
+    def load_checkpoint(self, path: str) -> Dict[str, Any]:
+        """
+        Load diffusion training checkpoint.
+        
+        Args:
+            path: Path to checkpoint file
+            
+        Returns:
+            Loaded checkpoint data
+        """
+        checkpoint = torch.load(path, map_location=self.device)
+        
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        if self.scheduler and 'scheduler_state_dict' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        
+        if self.scaler and 'scaler_state_dict' in checkpoint:
+            self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
+        
+        if self.ema_model and 'ema_model_state_dict' in checkpoint:
+            self.ema_model.load_state_dict(checkpoint['ema_model_state_dict'])
+            self.ema_decay = checkpoint.get('ema_decay', self.ema_decay)
+        
+        self.current_epoch = checkpoint['epoch']
+        self.global_step = checkpoint['global_step']
+        self.best_loss = checkpoint.get('best_loss', float('inf'))
+        
+        # Update training parameters
+        self.prediction_type = checkpoint.get('prediction_type', self.prediction_type)
+        self.conditioning_key = checkpoint.get('conditioning_key', self.conditioning_key)
+        self.conditioning_dropout = checkpoint.get('conditioning_dropout', self.conditioning_dropout)
+        self.loss_type = checkpoint.get('loss_type', self.loss_type)
+        
+        self.logger.info(f"Diffusion checkpoint loaded: {path}")
+        return checkpoint
+    
+    def get_training_info(self) -> Dict[str, Any]:
+        """Get comprehensive training information."""
+        info = super().get_training_info()
+        info.update({
+            "prediction_type": self.prediction_type,
+            "conditioning_key": self.conditioning_key,
+            "conditioning_dropout": self.conditioning_dropout,
+            "use_ema": self.use_ema,
+            "ema_decay": self.ema_decay,
+            "loss_type": self.loss_type,
+            "noise_scheduler_type": self.noise_scheduler.__class__.__name__,
+            "timesteps": self.noise_scheduler.timesteps,
+        })
+        return info

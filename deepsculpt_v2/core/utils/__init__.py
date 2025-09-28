@@ -1,11 +1,38 @@
 """
-DeepSculpt v2.0 Utilities
+Utilities package for DeepSculpt v2.0 PyTorch implementation.
 
-PyTorch utility functions and helpers.
+This package contains utility functions and classes including
+the modern Rich-integrated logger and other helper utilities.
 """
 
-from .pytorch_utils import PyTorchUtils
+from .logger import (
+    RichLogger,
+    LogLevel,
+    LogEntry,
+    get_logger,
+    setup_logger,
+    begin_section,
+    end_section,
+    log_action,
+    log_success,
+    log_error,
+    log_warning,
+    log_info,
+    section
+)
 
 __all__ = [
-    "PyTorchUtils"
+    "RichLogger",
+    "LogLevel", 
+    "LogEntry",
+    "get_logger",
+    "setup_logger",
+    "begin_section",
+    "end_section",
+    "log_action",
+    "log_success",
+    "log_error",
+    "log_warning",
+    "log_info",
+    "section",
 ]

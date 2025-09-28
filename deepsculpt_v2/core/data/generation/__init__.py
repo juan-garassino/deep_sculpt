@@ -1,15 +1,37 @@
 """
-DeepSculpt v2.0 Data Generation
+Data generation package for DeepSculpt PyTorch implementation.
 
-3D shape generation and sculpture composition using PyTorch tensors.
+This package contains components for generating 3D sculpture data
+including data generators and streaming utilities.
 """
 
-from .pytorch_shapes import PyTorchShapeFactory
-from .pytorch_sculptor import PyTorchSculptor
-from .pytorch_collector import PyTorchCollector
+from .data_generator import (
+    DataGenerator,
+    ParametricDataGenerator,
+    ConditionalDataGenerator,
+    create_simple_generator,
+    create_parametric_generator
+)
+
+from .dataset_streamer import (
+    StreamingDataset,
+    FileBasedDataset,
+    DistributedDataStreamer,
+    DatasetSplitter,
+    create_streaming_dataloader,
+    create_file_dataloader
+)
 
 __all__ = [
-    "PyTorchShapeFactory",
-    "PyTorchSculptor",
-    "PyTorchCollector"
+    "DataGenerator",
+    "ParametricDataGenerator",
+    "ConditionalDataGenerator",
+    "create_simple_generator",
+    "create_parametric_generator",
+    "StreamingDataset",
+    "FileBasedDataset",
+    "DistributedDataStreamer",
+    "DatasetSplitter",
+    "create_streaming_dataloader",
+    "create_file_dataloader",
 ]

@@ -1,0 +1,456 @@
+"""
+Base trainer class for DeepSculpt PyTorch implementation.
+
+This module provides the foundational trainer class that all specific trainers
+inherit from, providing common functionality for training, validation, checkpointing,
+and experiment tracking.
+"""
+
+import os
+import time
+import logging
+from typing import Dict, Any, Optional, Tuple, List, Union, Callable
+from dataclasses import dataclass
+from pathlib import Path
+from abc import ABC, abstractmethod
+
+import torch
+import torch.nn as nn
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.cuda.amp import GradScaler, autocast
+from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
+
+import numpy as np
+from datetime import datetime
+
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+
+try:
+    import mlflow
+    MLFLOW_AVAILABLE = True
+except ImportError:
+    MLFLOW_AVAILABLE = False
+
+
+@dataclass
+class TrainingConfig:
+    """Configuration for training parameters."""
+    # Basic training parameters
+    batch_size: int = 32
+    learning_rate: float = 0.0002
+    epochs: int = 100
+    
+    # Optimizer parameters
+    beta1: float = 0.5
+    beta2: float = 0.999
+    weight_decay: float = 0.0
+    
+    # Training techniques
+    mixed_precision: bool = True
+    gradient_clip: float = 1.0
+    progressive_growing: bool = False
+    curriculum_learning: bool = False
+    
+    # Distributed training
+    distributed: bool = False
+    world_size: int = 1
+    rank: int = 0
+    
+    # Checkpointing and logging
+    checkpoint_freq: int = 5
+    log_freq: int = 10
+    snapshot_freq: int = 1
+    
+    # Paths
+    checkpoint_dir: str = "./checkpoints"
+    log_dir: str = "./logs"
+    snapshot_dir: str = "./snapshots"
+    
+    # Experiment tracking
+    use_wandb: bool = False
+    use_mlflow: bool = False
+    use_tensorboard: bool = True
+    experiment_name: str = "deepsculpt_experiment"
+    
+    # Early stopping
+    early_stopping: bool = False
+    patience: int = 10
+    min_delta: float = 1e-4
+
+
+class BaseTrainer(ABC):
+    """
+    Base class for all trainers with common functionality.
+    
+    Provides infrastructure for training, validation, checkpointing,
+    experiment tracking, and distributed training.
+    """
+    
+    def __init__(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        config: TrainingConfig,
+        scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
+        device: str = "cuda"
+    ):
+        """
+        Initialize base trainer.
+        
+        Args:
+            model: Model to train
+            optimizer: Optimizer for training
+            config: Training configuration
+            scheduler: Learning rate scheduler
+            device: Device for training
+        """
+        self.model = model
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+        self.config = config
+        self.device = device
+        
+        # Mixed precision training
+        self.scaler = GradScaler() if config.mixed_precision else None
+        
+        # Metrics tracking
+        self.metrics = {
+            'train_loss': [],
+            'val_loss': [],
+            'epoch_times': [],
+            'learning_rates': []
+        }
+        
+        # Current training state
+        self.current_epoch = 0
+        self.global_step = 0
+        self.best_loss = float('inf')
+        self.epochs_without_improvement = 0
+        
+        # Setup logging and experiment tracking
+        self._setup_logging()
+        self._setup_experiment_tracking()
+        
+        # Setup distributed training if enabled
+        if config.distributed:
+            self._setup_distributed()
+        
+        # Move model to device
+        self.model = self.model.to(device)
+    
+    def _setup_logging(self):
+        """Setup logging infrastructure."""
+        os.makedirs(self.config.log_dir, exist_ok=True)
+        
+        # Setup Python logging
+        log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        logging.basicConfig(
+            level=logging.INFO,
+            format=log_format,
+            handlers=[
+                logging.FileHandler(os.path.join(self.config.log_dir, 'training.log')),
+                logging.StreamHandler()
+            ]
+        )
+        self.logger = logging.getLogger(self.__class__.__name__)
+        
+        # Setup TensorBoard
+        if self.config.use_tensorboard:
+            self.writer = SummaryWriter(log_dir=self.config.log_dir)
+        else:
+            self.writer = None
+    
+    def _setup_experiment_tracking(self):
+        """Setup experiment tracking (Wandb, MLflow)."""
+        if self.config.use_wandb and WANDB_AVAILABLE:
+            wandb.init(
+                project="deepsculpt",
+                name=self.config.experiment_name,
+                config=self.config.__dict__
+            )
+        
+        if self.config.use_mlflow and MLFLOW_AVAILABLE:
+            mlflow.set_experiment(self.config.experiment_name)
+            mlflow.start_run()
+            mlflow.log_params(self.config.__dict__)
+    
+    def _setup_distributed(self):
+        """Setup distributed training."""
+        if not dist.is_initialized():
+            dist.init_process_group(backend='nccl')
+        
+        self.model = DDP(self.model, device_ids=[self.config.rank])
+        self.logger.info(f"Distributed training setup complete. Rank: {self.config.rank}")
+    
+    @abstractmethod
+    def train_step(self, batch: Any) -> Dict[str, float]:
+        """
+        Execute a single training step.
+        
+        Args:
+            batch: Batch of training data
+            
+        Returns:
+            Dictionary of step metrics
+        """
+        pass
+    
+    @abstractmethod
+    def train_epoch(self, dataloader: DataLoader) -> Dict[str, float]:
+        """
+        Train for one epoch.
+        
+        Args:
+            dataloader: Training data loader
+            
+        Returns:
+            Dictionary of epoch metrics
+        """
+        pass
+    
+    @abstractmethod
+    def validate(self, dataloader: DataLoader) -> Dict[str, float]:
+        """
+        Validate the model.
+        
+        Args:
+            dataloader: Validation data loader
+            
+        Returns:
+            Dictionary of validation metrics
+        """
+        pass
+    
+    def train(
+        self,
+        train_dataloader: DataLoader,
+        val_dataloader: Optional[DataLoader] = None,
+        start_epoch: int = 0
+    ) -> Dict[str, List[float]]:
+        """
+        Complete training loop.
+        
+        Args:
+            train_dataloader: Training data loader
+            val_dataloader: Validation data loader
+            start_epoch: Starting epoch (for resuming training)
+            
+        Returns:
+            Dictionary of training history
+        """
+        self.logger.info(f"Starting training for {self.config.epochs} epochs")
+        
+        training_history = {
+            'train_loss': [],
+            'val_loss': [],
+            'epoch_times': [],
+            'learning_rates': []
+        }
+        
+        for epoch in range(start_epoch, self.config.epochs):
+            self.current_epoch = epoch
+            epoch_start_time = time.time()
+            
+            # Training phase
+            self.logger.info(f"Epoch {epoch + 1}/{self.config.epochs} - Training")
+            train_metrics = self.train_epoch(train_dataloader)
+            
+            # Validation phase
+            val_metrics = {}
+            if val_dataloader is not None:
+                self.logger.info(f"Epoch {epoch + 1}/{self.config.epochs} - Validation")
+                val_metrics = self.validate(val_dataloader)
+            
+            # Calculate epoch time
+            epoch_time = time.time() - epoch_start_time
+            
+            # Update metrics
+            training_history['train_loss'].append(train_metrics.get('loss', train_metrics.get('train_loss', 0)))
+            training_history['val_loss'].append(val_metrics.get('loss', val_metrics.get('val_loss', 0)))
+            training_history['epoch_times'].append(epoch_time)
+            training_history['learning_rates'].append(self.optimizer.param_groups[0]['lr'])
+            
+            # Log epoch metrics
+            epoch_metrics = {**train_metrics}
+            if val_metrics:
+                epoch_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
+            epoch_metrics['epoch_time'] = epoch_time
+            epoch_metrics['learning_rate'] = self.optimizer.param_groups[0]['lr']
+            
+            self.log_metrics(epoch_metrics, epoch, "epoch")
+            
+            # Log to console
+            train_loss = train_metrics.get('loss', train_metrics.get('train_loss', 0))
+            val_loss = val_metrics.get('loss', val_metrics.get('val_loss', 0)) if val_metrics else 0
+            self.logger.info(
+                f"Epoch {epoch + 1}/{self.config.epochs} completed in {epoch_time:.2f}s - "
+                f"Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}"
+            )
+            
+            # Check for improvement
+            current_loss = val_loss if val_metrics else train_loss
+            is_best = current_loss < self.best_loss
+            if is_best:
+                self.best_loss = current_loss
+                self.epochs_without_improvement = 0
+            else:
+                self.epochs_without_improvement += 1
+            
+            # Save checkpoint
+            if (epoch + 1) % self.config.checkpoint_freq == 0 or is_best:
+                checkpoint_path = os.path.join(
+                    self.config.checkpoint_dir,
+                    f"checkpoint_epoch_{epoch + 1}.pth"
+                )
+                self.save_checkpoint(checkpoint_path, epoch, epoch_metrics, is_best)
+            
+            # Early stopping
+            if self.config.early_stopping and self.epochs_without_improvement >= self.config.patience:
+                self.logger.info(f"Early stopping triggered after {self.config.patience} epochs without improvement")
+                break
+        
+        self.logger.info("Training completed")
+        return training_history
+    
+    def save_checkpoint(self, path: str, epoch: int, metrics: Dict[str, float], is_best: bool = False):
+        """
+        Save training checkpoint.
+        
+        Args:
+            path: Path to save checkpoint
+            epoch: Current epoch
+            metrics: Current metrics
+            is_best: Whether this is the best checkpoint
+        """
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        
+        checkpoint = {
+            'epoch': epoch,
+            'global_step': self.global_step,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'metrics': metrics,
+            'config': self.config,
+            'best_loss': self.best_loss,
+            'epochs_without_improvement': self.epochs_without_improvement
+        }
+        
+        if self.scheduler:
+            checkpoint['scheduler_state_dict'] = self.scheduler.state_dict()
+        
+        if self.scaler:
+            checkpoint['scaler_state_dict'] = self.scaler.state_dict()
+        
+        torch.save(checkpoint, path)
+        
+        if is_best:
+            best_path = path.replace('.pth', '_best.pth')
+            torch.save(checkpoint, best_path)
+        
+        self.logger.info(f"Checkpoint saved: {path}")
+    
+    def load_checkpoint(self, path: str) -> Dict[str, Any]:
+        """
+        Load training checkpoint.
+        
+        Args:
+            path: Path to checkpoint file
+            
+        Returns:
+            Loaded checkpoint data
+        """
+        checkpoint = torch.load(path, map_location=self.device)
+        
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        if self.scheduler and 'scheduler_state_dict' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        
+        if self.scaler and 'scaler_state_dict' in checkpoint:
+            self.scaler.load_state_dict(checkpoint['scaler_state_dict'])
+        
+        self.current_epoch = checkpoint['epoch']
+        self.global_step = checkpoint['global_step']
+        self.best_loss = checkpoint.get('best_loss', float('inf'))
+        self.epochs_without_improvement = checkpoint.get('epochs_without_improvement', 0)
+        
+        self.logger.info(f"Checkpoint loaded: {path}")
+        return checkpoint
+    
+    def log_metrics(self, metrics: Dict[str, float], step: int, prefix: str = ""):
+        """
+        Log metrics to all configured tracking systems.
+        
+        Args:
+            metrics: Dictionary of metrics to log
+            step: Current step/epoch
+            prefix: Prefix for metric names
+        """
+        # TensorBoard
+        if self.writer:
+            for key, value in metrics.items():
+                if isinstance(value, (int, float)):
+                    self.writer.add_scalar(f"{prefix}/{key}" if prefix else key, value, step)
+        
+        # Wandb
+        if self.config.use_wandb and WANDB_AVAILABLE:
+            wandb_metrics = {}
+            for key, value in metrics.items():
+                if isinstance(value, (int, float)):
+                    wandb_metrics[f"{prefix}/{key}" if prefix else key] = value
+            if wandb_metrics:
+                wandb.log(wandb_metrics, step=step)
+        
+        # MLflow
+        if self.config.use_mlflow and MLFLOW_AVAILABLE:
+            for key, value in metrics.items():
+                if isinstance(value, (int, float)):
+                    mlflow.log_metric(f"{prefix}_{key}" if prefix else key, value, step=step)
+    
+    def get_training_info(self) -> Dict[str, Any]:
+        """Get comprehensive training information."""
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        
+        return {
+            "model_class": self.model.__class__.__name__,
+            "total_parameters": total_params,
+            "trainable_parameters": trainable_params,
+            "current_epoch": self.current_epoch,
+            "global_step": self.global_step,
+            "best_loss": self.best_loss,
+            "epochs_without_improvement": self.epochs_without_improvement,
+            "device": str(self.device),
+            "distributed": self.config.distributed,
+            "mixed_precision": self.config.mixed_precision,
+            "learning_rate": self.optimizer.param_groups[0]['lr'],
+        }
+    
+    def cleanup(self):
+        """Cleanup resources."""
+        if self.writer:
+            self.writer.close()
+        
+        if self.config.use_wandb and WANDB_AVAILABLE:
+            wandb.finish()
+        
+        if self.config.use_mlflow and MLFLOW_AVAILABLE:
+            mlflow.end_run()
+        
+        if self.config.distributed:
+            dist.destroy_process_group()
+    
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        self.cleanup()
