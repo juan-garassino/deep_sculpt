@@ -1,0 +1,76 @@
+# DeepSculpt v2.0 Configuration
+
+# Model Configuration
+model:
+  # GAN models: simple, complex, skip, monochrome, autoencoder
+  # Diffusion models: unet3d
+  type: "skip"
+  void_dim: 64
+  noise_dim: 100
+  color_mode: 1  # 1 for monochrome, 3 for RGB
+  sparse: true
+  
+# Training Configuration
+training:
+  framework: "pytorch"
+  epochs: 100
+  batch_size: 32
+  learning_rate: 0.0002
+  mixed_precision: true
+  gradient_clip: 1.0
+  
+  # GAN specific
+  gan:
+    generator_lr: 0.0002
+    discriminator_lr: 0.0002
+    beta1: 0.5
+    beta2: 0.999
+    
+  # Diffusion specific  
+  diffusion:
+    timesteps: 1000
+    noise_schedule: "linear"  # linear, cosine
+    beta_start: 0.0001
+    beta_end: 0.02
+
+# Data Configuration
+data:
+  data_folder: "./data"
+  num_samples: 1000
+  chunk_size: 1000
+  num_workers: 4
+  prefetch_factor: 2
+  sparse_threshold: 0.1
+  
+  # Shape generation parameters
+  shapes:
+    edge_probability: 0.3
+    plane_probability: 0.3  
+    pipe_probability: 0.2
+    grid_probability: 0.2
+
+# Hardware Configuration
+hardware:
+  device: "auto"  # auto, cuda, cpu
+  distributed: false
+  num_gpus: 1
+  
+# Experiment Tracking
+experiment:
+  name: "deepsculpt_v2_experiment"
+  tracking: "mlflow"  # mlflow, wandb, tensorboard
+  log_interval: 10
+  save_interval: 100
+  
+# Visualization
+visualization:
+  backend: "plotly"  # matplotlib, plotly, open3d
+  save_plots: true
+  plot_interval: 50
+
+# Paths
+paths:
+  checkpoints: "./checkpoints"
+  logs: "./logs"
+  outputs: "./outputs"
+  data: "./data"
