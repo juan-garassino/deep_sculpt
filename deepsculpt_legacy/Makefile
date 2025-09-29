@@ -1,328 +1,315 @@
-# ----------------------------------
-#          INSTALL & TEST
-# ----------------------------------
+# DeepSculpt Legacy - TensorFlow Makefile
+# Comprehensive build system for legacy TensorFlow operations
 
-install_requirements:
-	@pip install -r requirements.txt
+.PHONY: help install install-dev test test-fast test-slow lint format type-check clean build docs serve-docs train-model generate-data evaluate-model serve-api run-bot workflow benchmark profile docker-build docker-run
 
-check_code:
-	@flake8 scripts/* deepSculpt/*.py
+# Default target
+help:
+	@echo "DeepSculpt Legacy (TensorFlow) - Available targets:"
+	@echo ""
+	@echo "Installation:"
+	@echo "  install          Install package and dependencies"
+	@echo "  install-dev      Install with development dependencies"
+	@echo "  install-all      Install with all optional dependencies"
+	@echo ""
+	@echo "Development:"
+	@echo "  test             Run all tests"
+	@echo "  test-fast        Run fast tests only"
+	@echo "  test-slow        Run slow/integration tests"
+	@echo "  test-gpu         Run GPU-specific tests"
+	@echo "  lint             Run linting (flake8)"
+	@echo "  format           Format code (black, isort)"
+	@echo "  type-check       Run type checking (mypy)"
+	@echo "  clean            Clean build artifacts"
+	@echo ""
+	@echo "Build and Documentation:"
+	@echo "  build            Build package"
+	@echo "  docs             Build documentation"
+	@echo "  serve-docs       Serve documentation locally"
+	@echo ""
+	@echo "Machine Learning Operations:"
+	@echo "  train-model      Train a TensorFlow GAN model"
+	@echo "  generate-data    Generate synthetic training data"
+	@echo "  evaluate-model   Evaluate a trained model"
+	@echo "  benchmark        Run performance benchmarks"
+	@echo "  profile          Profile model performance"
+	@echo ""
+	@echo "Services:"
+	@echo "  serve-api        Start the API server"
+	@echo "  run-bot          Start the Telegram bot"
+	@echo "  workflow         Run workflow automation"
+	@echo ""
+	@echo "Docker:"
+	@echo "  docker-build     Build Docker image"
+	@echo "  docker-run       Run in Docker container"
+	@echo ""
+	@echo "Utilities:"
+	@echo "  check-env        Check environment setup"
+	@echo "  setup-env        Setup development environment"
 
-black:
-	@black scripts/* deepSculpt/*/*.py deepSculpt/*.py deepSculpt/*/*/*.py
+# Variables
+PYTHON := python3
+PIP := pip3
+PACKAGE_NAME := deepsculpt-legacy
+TEST_PATH := tests/
+SRC_PATH := deepSculpt/
+DOCS_PATH := docs/
+BUILD_PATH := build/
+DIST_PATH := dist/
 
-test:
-	@coverage run -m pytest tests/*.py
-	@coverage report -m --omit="${VIRTUAL_ENV}/lib/python*"
+# Environment setup
+check-env:
+	@echo "Checking environment setup..."
+	@$(PYTHON) --version
+	@$(PIP) --version
+	@$(PYTHON) -c "import tensorflow as tf; print(f'TensorFlow: {tf.__version__}')" || echo "TensorFlow not installed"
+	@$(PYTHON) -c "import numpy as np; print(f'NumPy: {np.__version__}')" || echo "NumPy not installed"
+	@echo "Environment check complete."
 
-ftest:
-	@Write me
+setup-env:
+	@echo "Setting up development environment..."
+	@$(PIP) install --upgrade pip setuptools wheel
+	@$(PIP) install -e ".[dev]"
+	@pre-commit install
+	@echo "Development environment setup complete."
 
-clean:
-	@rm -f */version.txt
-	@rm -f .coverage
-	@rm -fr */__pycache__ */*/__pycache__ */*/*/__pycache__ */*.pyc __pycache__
-	@rm -fr build dist
-	@rm -fr deepSculpt-*.dist-info
-	@rm -fr deepSculpt.egg-info
-	@rm -fr results
-	@rm -fr data
-	@rm -fr notebooks/results
-	@rm -fr notebooks/*.npy
-
+# Installation targets
 install:
-	@pip install . -U
-
-all: clean install test black check_code
-
-count_lines:
-	@find ./ -name '*.py' -exec  wc -l {} \; | sort -n| awk \
-        '{printf "%4s %s\n", $$1, $$2}{s+=$$0}END{print s}'
-	@echo ''
-	@find ./scripts -name '*-*' -exec  wc -l {} \; | sort -n| awk \
-		        '{printf "%4s %s\n", $$1, $$2}{s+=$$0}END{print s}'
-	@echo ''
-	@find ./tests -name '*.py' -exec  wc -l {} \; | sort -n| awk \
-        '{printf "%4s %s\n", $$1, $$2}{s+=$$0}END{print s}'
-	@echo ''
-
-# ----------------------------------
-#      MODEL
-# ----------------------------------
-
-app-id= 1639938746408345
-
-app-secret= eb85d63732bdf12fd935d4a3437f5740
-
-redirect-uri=
-
-code=
-
-access_token=IGQVJYQTNGcHc2akpNcVdtY1NjQmgxU2V1V014bVREdDBTMFFVR3hrWms3XzVBU25QajJTWElzSmVHWTFHU2c0bFZAmQllrWkFtYkoxcFpwVnBzcEU2VGU0STRSYl9tazdfVzRJUVFmdkh0ejdhczFubAZDZD
-
-# PACKAGE RUNS
-run_test:
-	curl -X POST \
-    https://api.instagram.com/oauth/${access_token} client_id=${app-id} client_secret=${app-secret} \
-		grant_type=${authorization_code} redirect_uri=${redirect-uri} code=${code}
-
-# PACKAGE RUNS
-run_trainer:
-	python -m deepSculpt.trainer.trainer
-
-# PACKAGE RUNS
-run_sculptor:
-	python -m deepSculpt.sculptor.sculptor
-
-# PACKAGE RUNS
-run_collector:
-	python -m deepSculpt.collector.collector
-
-# PACKAGE RUNS
-run_curator:
-	python -m deepSculpt.curator.curator
-
-# PACKAGE RUNS
-run_emissary:
-	python -m deepSculpt.emissary.emissary
-
-# PACKAGE RUNS
-run_manager:
-	python -m deepSculpt.manager.manager
-
-# PACKAGE RUNS
-run_all: clean black run_collector run_trainer
-
-
-# ----------------------------------
-#      UPLOAD PACKAGE TO PYPI
-# ----------------------------------
-
-PYPI_USERNAME=<AUTHOR>
-build:
-	@python setup.py sdist bdist_wheel
-
-pypi_test:
-	@twine upload -r testpypi dist/* -u $(PYPI_USERNAME)
-
-pypi:
-	@twine upload dist/* -u $(PYPI_USERNAME)
-
-# ----------------------------------
-#      TRAIN MODEL
-# ----------------------------------
-
-# project id - replace with your GCP project id
-PROJECT_ID=deepsculpt
-
-# bucket
-BUCKET_NAME=
-
-# training folder
-BUCKET_TRAINING_FOLDER=data
-
-# training params, choose your region from https://cloud.google.com/storage/docs/locations#available_locations
-REGION=europe-west1
-
-# app environment
-PYTHON_VERSION=3.7
-
-FRAMEWORK=scikit-learn
-
-RUNTIME_VERSION=2.2
-
-# package params
-PACKAGE_NAME=deepSculpt
-
-FILENAME=trainer
-
-JOB_DIR=gs://deepsculpt
-
-MACHINE=config.yaml
-
-MACHINE_GPU=config-gpu.yaml
-
-set_project:
-	@gcloud config set project ${PROJECT_ID}
-
-create_bucket:
-	@gsutil mb -l ${REGION} -p ${PROJECT_ID} gs://${os.environ.get('BUCKET_NAME')}
-
-##### Job - - - - - - - - - - - - - - - - - - - - - - - - -
-
-JOB_NAME=deepsculpt_$(shell date +'%Y%m%d_%H%M%S')
-
-gcp_submit_training:
-	gcloud ai-platform jobs submit training ${JOB_NAME} \
-		--job-dir gs://${os.environ.get('BUCKET_NAME')}/${BUCKET_TRAINING_FOLDER} \
-		--package-path ${PACKAGE_NAME} \
-		--module-name ${PACKAGE_NAME}.${FILENAME} \
-		--python-version=${PYTHON_VERSION} \
-		--runtime-version=${RUNTIME_VERSION} \
-		--region ${REGION} \
-		--config ${MACHINE} \
-		--job-dir ${JOB_DIR} \
-		--stream-logs
-
-gcp_submit_training_gpu:
-	gcloud ai-platform jobs submit training ${JOB_NAME} \
-		--job-dir gs://${os.environ.get('BUCKET_NAME')}/${BUCKET_TRAINING_FOLDER} \
-		--package-path ${PACKAGE_NAME} \
-		--module-name ${PACKAGE_NAME}.${FILENAME} \
-		--python-version=${PYTHON_VERSION} \
-		--runtime-version=${RUNTIME_VERSION} \
-		--region ${REGION} \
-		--config ${MACHINE_GPU} \
-		--stream-logs
-
-# ----------------------------------
-#      RUN API
-# ----------------------------------
-
-api_run:
-	python app.py
-
-
-# PACKAGE ACTIONS
-actions_reinstall:
-	@pip uninstall -y taxifare || :
-	@pip install -e .
-
-# PACKAGE ACTIONS
-actions_clean:
-	@rm -f */version.txt
-	@rm -f .coverage
-	@rm -fr */__pycache__ */*.pyc __pycache__
-	@rm -fr build dist
-	@rm -fr deepSculpt-*.dist-info
-	@rm -fr deepSculpt.egg-info
-
-# PACKAGE RUNS
-run_api:
-	uvicorn deepCab.api.fast:app --reload
-
-# TESTS
-default:
-	@echo 'tests are only executed locally for this challenge'
-# TESTS
-test_api:
-	test_api_root test_api_predict
-# TESTS
-test_api_root:
-	TEST_ENV=development pytest tests/api -k 'test_root' --asyncio-mode=strict -W "ignore"
-# TESTS
-test_api_predict:
-	TEST_ENV=development pytest tests/api -k 'test_predict' --asyncio-mode=strict -W "ignore"
-
-# GOOGLE SETUP
-gcpsetup_00_login:
-	@gcloud auth login --cred-file=${GOOGLE_APPLICATION_CREDENTIALS}
-
-# GOOGLE SETUP
-gcpsetup_01_setproject:
-	@gcloud config set project ${GCP_PROJECT_ID}
-
-# GOOGLE SETUP
-gcpsetup_02_setcredentials:
-	@gcloud projects get-iam-policy ${GCP_PROJECT_ID} \
---flatten="bindings[].members" \
---format='table(bindings.role)' \
---filter="bindings.members:${SERVICE_ACCOUNT_EMAIL}"
-# GOOGLE SETUP
-gcpsetup_03_fullsetup:
-	gcp_login set_credentials set_project
-
-# GOOGLE BUCKET
-gcpbucket_00_create:
-	@gsutil mb -l ${GCR_REGION} -p ${GCP_PROJECT_ID} gs://${BUCKET_NAME}
-
-# GOOGLE INSTANCE
-gcpinstance_00_create:
-	gcloud compute instances create ${INSTANCE} --image-project=${IMAGE_PROJECT} --image-family=${IMAGE_FAMILY}
-
-# GOOGLE INSTANCE
-gcpinstance_01_start:
-	gcloud compute instances start ${INSTANCE} --project ${GCP_PROJECT_ID} --zone ${GCE_ZONE}
-
-# GOOGLE INSTANCE
-gcpinstance_02_connect:
-	gcloud beta compute ssh ${INSTANCE} --project ${GCP_PROJECT_ID} --zone ${GCE_ZONE}
-
-# GOOGLE INSTANCE
-gcpinstance_03_stop:
-	gcloud compute instances stop ${INSTANCE} --project ${GCP_PROJECT_ID} --zone ${GCE_ZONE}
-
-# GOOGLE INSTANCE GITHUB
-gcpinstance_04_copyssh:
-	gcloud compute scp ~/.ssh/id_ed25519 ${INSTANCE}:~/.ssh/
-
-# GOOGLE INSTANCE GOOGLE CREDENTIALS
-gcpinstance_05_copyjson:
-	gcloud compute scp ${GOOGLE_APPLICATION_CREDENTIALS} ${INSTANCE}:~/.ssh/
-	gcloud compute ssh ${INSTANCE} --command "echo 'export GOOGLE_APPLICATION_CREDENTIALS=~/.ssh/$(basename ${GOOGLE_APPLICATION_CREDENTIALS})' >> ~/.zshrc"
-# DOCKER
-docker_00_buildimage:
-	sudo docker build -t ${GCR_MULTI_REGION}/${GCP_PROJECT_ID}/${DOCKER_IMAGE_NAME} .
-
-# DOCKER
-docker_01_imagelist:
-	export IMAGES=$(docker images -aq)
-
-# DOCKER
-docker_02_deleteimages:
-	docker rmi -f ${IMAGES}
-
-# DOCKER RUN INTERACTIVE
-docker_01_runshell:
-	docker run -it --env-file .env ${GCR_MULTI_REGION}/${GCP_PROJECT_ID}/${DOCKER_IMAGE_NAME} sh
-
-# DOCKER RUN LOCALLY
-docker_02_runimage:
-	sudo docker run -e PORT=8000 -p 8080:8000 --env-file .env ${GCR_MULTI_REGION}/${GCP_PROJECT_ID}/${DOCKER_IMAGE_NAME}
-
-# DOCKER
-docker_03_pushtoregistry:
-	docker push ${GCR_MULTI_REGION}/${GCP_PROJECT_ID}/${DOCKER_IMAGE_NAME}
-
-# DOCKER
-docker_04_deploycontainer:
-	gcloud run deploy --image ${GCR_MULTI_REGION}/${GCP_PROJECT_ID}/${DOCKER_IMAGE_NAME} --platform managed --region ${GCR_REGION}
-
-# bonus
-
-GCP_cloud_config:
-	gcloud run services describe ${DOCKER_IMAGE_NAME} --format export > service.yaml
-
-GCP_update_config:
-	gcloud run services replace service.yaml
-
-prefect_server_start:
-	prefect server start --postgres-port 5433 --ui-port 8088
-
-prefect_agent_start:
-	prefect agent local start
-
-prefect_project_create:
-	prefect create project ${PREFECT_FLOW_NAME}
-
-################### DATA SOURCES ACTIONS ################
-
-# BIG QUERY ERASE
-delete_new_source:
-	-bq rm -f ${DATASET}.train_new.csv
-	-bq rm -f ${DATASET}.val_new.csv
-	-rm ~/.lewagon/mlops/data/raw/train_new.csv
-	-rm ~/.lewagon/mlops/data/raw/val_new.csv
-
-# BIG QUERY RESET RESOURCES
-reset_sources_env:
-	-bq load --sync --autodetect --skip_leading_rows 1 --replace ${DATASET}.val_processed_${DATASET_SIZE} ${GS_DIR}/processed/val_processed_${DATASET_SIZE}.csv
-
-# BIG QUERY SHOW RESOURCES
-show_sources_env:
-	-ls -laR ~/.lewagon/mlops/data | grep ${DATASET_SIZE}
-	-bq ls ${DATASET}
-	-bq show ${DATASET}.train_${DATASET_SIZE}
-	-bq show ${DATASET}.val_${DATASET_SIZE}
-	-bq show ${DATASET}.train_processed_${DATASET_SIZE}
-	-bq show ${DATASET}.val_processed_${DATASET_SIZE}
+	@echo "Installing DeepSculpt Legacy..."
+	@$(PIP) install --upgrade pip
+	@$(PIP) install -e .
+	@echo "Installation complete."
+
+install-dev:
+	@echo "Installing DeepSculpt Legacy with development dependencies..."
+	@$(PIP) install --upgrade pip
+	@$(PIP) install -e ".[dev]"
+	@echo "Development installation complete."
+
+install-all:
+	@echo "Installing DeepSculpt Legacy with all dependencies..."
+	@$(PIP) install --upgrade pip
+	@$(PIP) install -e ".[all]"
+	@echo "Full installation complete."
+
+# Testing targets
+test:
+	@echo "Running all tests..."
+	@pytest $(TEST_PATH) -v --cov=$(SRC_PATH) --cov-report=term-missing --cov-report=html
+
+test-fast:
+	@echo "Running fast tests..."
+	@pytest $(TEST_PATH) -v -m "not slow" --cov=$(SRC_PATH)
+
+test-slow:
+	@echo "Running slow/integration tests..."
+	@pytest $(TEST_PATH) -v -m "slow" --cov=$(SRC_PATH)
+
+test-gpu:
+	@echo "Running GPU-specific tests..."
+	@pytest $(TEST_PATH) -v -m "gpu" --cov=$(SRC_PATH)
+
+test-tensorflow:
+	@echo "Running TensorFlow-specific tests..."
+	@pytest $(TEST_PATH) -v -m "tensorflow" --cov=$(SRC_PATH)
+
+# Code quality targets
+lint:
+	@echo "Running linting..."
+	@flake8 $(SRC_PATH) $(TEST_PATH)
+	@echo "Linting complete."
+
+format:
+	@echo "Formatting code..."
+	@black $(SRC_PATH) $(TEST_PATH)
+	@isort $(SRC_PATH) $(TEST_PATH)
+	@echo "Code formatting complete."
+
+type-check:
+	@echo "Running type checking..."
+	@mypy $(SRC_PATH)
+	@echo "Type checking complete."
+
+# Build targets
+clean:
+	@echo "Cleaning build artifacts..."
+	@rm -rf $(BUILD_PATH) $(DIST_PATH) *.egg-info
+	@rm -rf .pytest_cache .coverage htmlcov
+	@find . -type d -name __pycache__ -exec rm -rf {} +
+	@find . -type f -name "*.pyc" -delete
+	@echo "Clean complete."
+
+build: clean
+	@echo "Building package..."
+	@$(PYTHON) -m build
+	@echo "Build complete."
+
+# Documentation targets
+docs:
+	@echo "Building documentation..."
+	@cd $(DOCS_PATH) && make html
+	@echo "Documentation build complete."
+
+serve-docs:
+	@echo "Serving documentation locally..."
+	@cd $(DOCS_PATH)/_build/html && $(PYTHON) -m http.server 8080
+
+# Machine Learning Operations
+train-model:
+	@echo "Training TensorFlow GAN model..."
+	@$(PYTHON) main.py train \
+		--model-type=skip \
+		--epochs=100 \
+		--batch-size=32 \
+		--data-folder=./data \
+		--output-dir=./results \
+		--mlflow \
+		--verbose
+
+train-simple:
+	@echo "Training simple GAN model..."
+	@$(PYTHON) main.py train \
+		--model-type=simple \
+		--epochs=50 \
+		--batch-size=16 \
+		--data-folder=./data
+
+train-complex:
+	@echo "Training complex GAN model..."
+	@$(PYTHON) main.py train \
+		--model-type=complex \
+		--epochs=200 \
+		--batch-size=32 \
+		--data-folder=./data \
+		--mlflow
+
+generate-data:
+	@echo "Generating synthetic training data..."
+	@$(PYTHON) main.py generate-data \
+		--num-samples=1000 \
+		--void-dim=64 \
+		--num-shapes=5 \
+		--output-dir=./data
+
+generate-data-large:
+	@echo "Generating large dataset..."
+	@$(PYTHON) main.py generate-data \
+		--num-samples=10000 \
+		--void-dim=64 \
+		--num-shapes=7 \
+		--output-dir=./data/large
+
+evaluate-model:
+	@echo "Evaluating trained model..."
+	@$(PYTHON) main.py evaluate \
+		--checkpoint=./results/generator_final \
+		--num-samples=20 \
+		--visualize \
+		--output-dir=./evaluation
+
+benchmark:
+	@echo "Running performance benchmarks..."
+	@$(PYTHON) -m pytest tests/benchmarks/ -v --benchmark-only
+
+profile:
+	@echo "Profiling model performance..."
+	@$(PYTHON) -m cProfile -o profile_results.prof main.py train --epochs=1 --batch-size=8
+	@$(PYTHON) -c "import pstats; pstats.Stats('profile_results.prof').sort_stats('cumulative').print_stats(20)"
+
+# Service targets
+serve-api:
+	@echo "Starting API server..."
+	@$(PYTHON) main.py serve-api --host=0.0.0.0 --port=8000 --reload
+
+serve-api-prod:
+	@echo "Starting API server in production mode..."
+	@$(PYTHON) main.py serve-api --host=0.0.0.0 --port=8000
+
+run-bot:
+	@echo "Starting Telegram bot..."
+	@$(PYTHON) main.py run-bot --token=$(TELEGRAM_TOKEN)
+
+workflow:
+	@echo "Running workflow automation..."
+	@$(PYTHON) main.py workflow --mode=development
+
+workflow-prod:
+	@echo "Running workflow in production mode..."
+	@$(PYTHON) main.py workflow --mode=production
+
+all-services:
+	@echo "Starting all services..."
+	@$(PYTHON) main.py all --mode=development --bot-token=$(TELEGRAM_TOKEN)
+
+# Docker targets
+docker-build:
+	@echo "Building Docker image..."
+	@docker build -t $(PACKAGE_NAME):latest .
+
+docker-run:
+	@echo "Running Docker container..."
+	@docker run -it --rm -p 8000:8000 $(PACKAGE_NAME):latest
+
+docker-run-gpu:
+	@echo "Running Docker container with GPU support..."
+	@docker run --gpus all -it --rm -p 8000:8000 $(PACKAGE_NAME):latest
+
+# Development workflow targets
+dev-setup: install-dev setup-env
+	@echo "Development setup complete."
+
+dev-test: format lint type-check test-fast
+	@echo "Development testing complete."
+
+dev-full: format lint type-check test
+	@echo "Full development check complete."
+
+# CI/CD targets
+ci-test:
+	@echo "Running CI tests..."
+	@pytest $(TEST_PATH) -v --cov=$(SRC_PATH) --cov-report=xml --cov-fail-under=80
+
+ci-lint:
+	@echo "Running CI linting..."
+	@flake8 $(SRC_PATH) $(TEST_PATH) --count --select=E9,F63,F7,F82 --show-source --statistics
+	@flake8 $(SRC_PATH) $(TEST_PATH) --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics
+
+# Release targets
+release-check: clean format lint type-check test build
+	@echo "Release check complete."
+
+release-build: release-check
+	@echo "Building release..."
+	@$(PYTHON) -m build
+	@twine check dist/*
+
+# Monitoring and logging
+logs:
+	@echo "Showing recent logs..."
+	@tail -f *.log 2>/dev/null || echo "No log files found"
+
+monitor:
+	@echo "Starting system monitoring..."
+	@$(PYTHON) -c "
+import psutil
+import time
+while True:
+    print(f'CPU: {psutil.cpu_percent()}% | Memory: {psutil.virtual_memory().percent}%')
+    time.sleep(5)
+"
+
+# Data management
+clean-data:
+	@echo "Cleaning generated data..."
+	@rm -rf ./data/generated_*
+	@rm -rf ./results/temp_*
+
+backup-data:
+	@echo "Backing up data..."
+	@tar -czf data_backup_$(shell date +%Y%m%d_%H%M%S).tar.gz ./data ./results
+
+# Environment variables for common operations
+export PYTHONPATH := $(shell pwd):$(PYTHONPATH)
+export CUDA_VISIBLE_DEVICES ?= 0
+export TF_CPP_MIN_LOG_LEVEL ?= 2
+export MLFLOW_TRACKING_URI ?= http://localhost:5000

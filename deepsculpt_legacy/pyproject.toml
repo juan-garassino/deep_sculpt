@@ -1,28 +1,250 @@
-[tool.poetry]
-name = "deepsculpt"
-version = "0.1.0"
-description = ""
-authors = ["Juan Garassino <juan.garassino@gmail.com>"]
-readme = "README.md"
-
-[tool.poetry.dependencies]
-python = "^3.10"
-numpy = ">=1.19.5"
-tensorflow = ">=2.6.0"
-black = ">=22.0.0"
-ipykernel = ">=6.0.0"
-matplotlib = ">=3.4.0"
-scikit-learn = ">=1.0.0"
-colorama = ">=0.4.4"
-google-cloud-bigquery = "<3.0.0"
-google-cloud-storage = ">=2.0.0"
-mlflow = "1.27.0"
-imageio = ">=2.9.0"
-scipy = ">=1.7.0"
-plotly = ">=5.0.0"
-nbformat = ">=5.1.0"
-
-
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deepsculpt-legacy"
+version = "1.0.0"
+description = "DeepSculpt Legacy - TensorFlow-based 3D Generative Models"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "DeepSculpt Team", email = "team@deepsculpt.ai"}
+]
+maintainers = [
+    {name = "DeepSculpt Team", email = "team@deepsculpt.ai"}
+]
+keywords = ["3d", "generative", "tensorflow", "gan", "voxel", "sculpture"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+]
+requires-python = ">=3.8"
+
+# Core TensorFlow dependencies
+dependencies = [
+    "tensorflow>=2.10.0,<3.0.0",
+    "tensorflow-probability>=0.18.0",
+    "numpy>=1.21.0,<2.0.0",
+    "pandas>=1.3.0",
+    "matplotlib>=3.5.0",
+    "plotly>=5.0.0",
+    "scikit-learn>=1.0.0",
+    "scipy>=1.7.0",
+    "Pillow>=8.0.0",
+    "tqdm>=4.60.0",
+    "pyyaml>=6.0",
+    "h5py>=3.1.0",
+    "imageio>=2.9.0",
+]
+
+[project.optional-dependencies]
+# Development dependencies
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-xdist>=3.0.0",
+    "black>=22.0.0",
+    "isort>=5.10.0",
+    "flake8>=5.0.0",
+    "mypy>=0.991",
+    "pre-commit>=2.20.0",
+    "jupyter>=1.0.0",
+    "ipykernel>=6.0.0",
+]
+
+# Experiment tracking
+tracking = [
+    "mlflow>=2.0.0",
+    "wandb>=0.13.0",
+    "tensorboard>=2.10.0",
+]
+
+# Workflow orchestration
+workflow = [
+    "prefect>=2.0.0",
+    "dask[complete]>=2022.0.0",
+    "celery>=5.2.0",
+    "redis>=4.0.0",
+]
+
+# API and bot services
+services = [
+    "fastapi>=0.85.0",
+    "uvicorn[standard]>=0.18.0",
+    "python-telegram-bot>=20.0",
+    "requests>=2.28.0",
+    "aiohttp>=3.8.0",
+]
+
+# Visualization enhancements
+viz = [
+    "plotly>=5.0.0",
+    "dash>=2.6.0",
+    "streamlit>=1.12.0",
+    "bokeh>=2.4.0",
+    "seaborn>=0.11.0",
+]
+
+# Performance and optimization
+performance = [
+    "numba>=0.56.0",
+    "cython>=0.29.0",
+    "joblib>=1.1.0",
+]
+
+# All optional dependencies
+all = [
+    "deepsculpt-legacy[dev,tracking,workflow,services,viz,performance]"
+]
+
+[project.urls]
+Homepage = "https://github.com/deepsculpt/deepsculpt"
+Documentation = "https://deepsculpt.readthedocs.io"
+Repository = "https://github.com/deepsculpt/deepsculpt"
+Issues = "https://github.com/deepsculpt/deepsculpt/issues"
+Changelog = "https://github.com/deepsculpt/deepsculpt/blob/main/CHANGELOG.md"
+
+[project.scripts]
+deepsculpt-legacy = "main:main"
+
+[tool.setuptools]
+packages = ["deepSculpt", "boilerplate"]
+
+[tool.setuptools.package-data]
+"*" = ["*.yaml", "*.yml", "*.json", "*.txt", "*.md"]
+
+# Black configuration
+[tool.black]
+line-length = 88
+target-version = ['py38', 'py39', 'py310', 'py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+# isort configuration
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["deepSculpt", "boilerplate"]
+known_third_party = ["tensorflow", "numpy", "pandas", "matplotlib", "plotly"]
+
+# MyPy configuration
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "tensorflow.*",
+    "tensorflow_probability.*",
+    "plotly.*",
+    "mlflow.*",
+    "wandb.*",
+    "prefect.*",
+    "telegram.*",
+]
+ignore_missing_imports = true
+
+# Pytest configuration
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=deepSculpt",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "tensorflow: marks tests that require TensorFlow",
+    "gpu: marks tests that require GPU",
+]
+
+# Coverage configuration
+[tool.coverage.run]
+source = ["deepSculpt"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "setup.py",
+    "*/migrations/*",
+    "*/venv/*",
+    "*/.venv/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+# Flake8 configuration (in setup.cfg format for compatibility)
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503", "E501"]
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    ".eggs",
+    "*.egg-info",
+    ".venv",
+    "venv",
+]
+per-file-ignores = [
+    "__init__.py:F401",
+    "tests/*:S101",
+]

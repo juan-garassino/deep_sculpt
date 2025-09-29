@@ -1,0 +1,156 @@
+# DeepSculpt v2.0 - Google Colab Configuration
+# Optimized settings for Google Colab environment with memory and compute constraints
+
+# Model configuration optimized for Colab
+model:
+  void_dim: 32  # Smaller for memory constraints
+  noise_dim: 100
+  model_type: "simple"  # Start with simple models
+  sparse: true  # Enable sparse tensors for memory efficiency
+  color_mode: 1
+
+# Training configuration for Colab
+training:
+  epochs: 10  # Shorter training for Colab sessions
+  batch_size: 4  # Small batch size for memory
+  learning_rate: 0.0002
+  beta1: 0.5
+  beta2: 0.999
+  mixed_precision: true  # Enable if GPU available
+  gradient_clip: 1.0
+  scheduler: false  # Disable for simplicity
+  
+  # Colab-specific optimizations
+  checkpoint_freq: 2  # Save checkpoints more frequently
+  snapshot_freq: 5
+  early_stopping: true
+  patience: 5
+
+# Data configuration for Colab
+data:
+  num_samples: 100  # Smaller dataset for quick testing
+  num_shapes: 3  # Fewer shapes per sculpture
+  sparse_threshold: 0.1
+  num_workers: 2  # Limited workers for Colab
+  pin_memory: true  # If GPU available
+  prefetch_factor: 2
+
+# Diffusion model configuration
+diffusion:
+  timesteps: 100  # Reduced for faster training
+  noise_schedule: "linear"
+  beta_start: 0.0001
+  beta_end: 0.02
+  num_inference_steps: 20  # Faster inference
+
+# System configuration for Colab
+system:
+  device: "auto"  # Auto-detect GPU/CPU
+  log_level: "INFO"
+  save_memory: true
+  
+  # Memory management
+  memory_fraction: 0.8  # Use 80% of available GPU memory
+  empty_cache_freq: 10  # Clear cache every 10 steps
+  
+  # Performance monitoring
+  profile_memory: true
+  monitor_gpu: true
+
+# Colab-specific settings
+colab:
+  # Session management
+  session_timeout_hours: 12
+  auto_save_interval: 300  # Save every 5 minutes
+  
+  # Output management
+  max_output_files: 50
+  compress_outputs: true
+  
+  # Visualization settings
+  backend: "plotly"  # Works well in Colab
+  interactive: true
+  max_plot_size: 1000  # Limit plot complexity
+  
+  # Google Drive integration
+  mount_drive: false  # Set to true to mount Google Drive
+  drive_path: "/content/drive/MyDrive/DeepSculpt"
+  
+  # Notification settings
+  notify_completion: false  # Set to true for email notifications
+
+# Experiment tracking (lightweight for Colab)
+tracking:
+  enabled: false  # Disable heavy tracking for Colab
+  local_logging: true
+  save_metrics: true
+  plot_metrics: true
+
+# Quick start configurations
+quick_start:
+  # Minimal training for testing
+  minimal:
+    epochs: 2
+    batch_size: 2
+    num_samples: 20
+    void_dim: 16
+  
+  # Standard training
+  standard:
+    epochs: 10
+    batch_size: 4
+    num_samples: 100
+    void_dim: 32
+  
+  # Extended training (for Pro users)
+  extended:
+    epochs: 25
+    batch_size: 8
+    num_samples: 500
+    void_dim: 48
+
+# Resource limits and warnings
+limits:
+  max_memory_gb: 12.7  # Standard Colab limit
+  max_disk_gb: 100
+  max_session_hours: 12
+  
+  # Warning thresholds
+  memory_warning: 0.8  # Warn at 80% memory usage
+  disk_warning: 0.9    # Warn at 90% disk usage
+  time_warning: 10     # Warn at 10 hours
+
+# Optimization flags
+optimizations:
+  # PyTorch optimizations
+  torch_compile: false  # May not work in all Colab versions
+  channels_last: false  # Memory layout optimization
+  
+  # CUDA optimizations
+  cuda_benchmark: true
+  cuda_deterministic: false
+  
+  # Memory optimizations
+  gradient_checkpointing: true
+  activation_checkpointing: false
+  
+  # Data loading optimizations
+  persistent_workers: false  # Can cause issues in Colab
+  multiprocessing: false     # Limited in Colab
+
+# Error handling and recovery
+error_handling:
+  auto_restart_on_oom: true
+  save_on_error: true
+  max_retries: 3
+  fallback_to_cpu: true
+  reduce_batch_on_oom: true
+
+# Paths (relative to notebook directory)
+paths:
+  data: "./colab_data"
+  results: "./colab_results"
+  checkpoints: "./colab_checkpoints"
+  logs: "./colab_logs"
+  samples: "./colab_samples"
+  exports: "./colab_exports"
