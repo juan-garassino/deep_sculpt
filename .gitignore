@@ -13,6 +13,8 @@ raw_data/
 results/
 *.png
 *.npy
+*.pkl
+*.pth
 
 results
 results/snapshots/*
