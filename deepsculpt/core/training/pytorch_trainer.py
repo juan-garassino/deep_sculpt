@@ -331,14 +331,19 @@ class GANTrainer(BaseTrainer):
         return gradient_penalty
     
     def train_step(self, real_data: torch.Tensor) -> Dict[str, float]:
-        """Execute a single training step."""
+        """Execute a single training step with StyleGAN-inspired strategy."""
         batch_size = real_data.size(0)
         
-        # Generate noise
-        noise = torch.randn(batch_size, self.noise_dim, device=self.device)
+        # Train Discriminator multiple times (StyleGAN strategy)
+        disc_steps = getattr(self.config, 'disc_steps', 1)
+        disc_losses = []
         
-        # Train Discriminator
-        self.disc_optimizer.zero_grad()
+        for _ in range(disc_steps):
+            # Generate noise
+            noise = torch.randn(batch_size, self.noise_dim, device=self.device)
+            
+            # Train Discriminator
+            self.disc_optimizer.zero_grad()
         
         if self.config.mixed_precision:
             with autocast():
@@ -382,14 +387,33 @@ class GANTrainer(BaseTrainer):
             # Total discriminator loss
             disc_loss = (real_loss + fake_loss) / 2
             
+            # R1 gradient penalty (StyleGAN)
+            if hasattr(self.config, 'use_r1_penalty') and self.config.use_r1_penalty:
+                real_data.requires_grad = True
+                real_output_gp = self.discriminator(real_data)
+                r1_grads = torch.autograd.grad(
+                    outputs=real_output_gp.sum(),
+                    inputs=real_data,
+                    create_graph=True,
+                    only_inputs=True
+                )[0]
+                r1_penalty = r1_grads.pow(2).reshape(batch_size, -1).sum(1).mean()
+                disc_loss += 0.5 * getattr(self.config, 'r1_gamma', 10.0) * r1_penalty
+            
             disc_loss.backward()
             
             if self.config.gradient_clip > 0:
                 torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.config.gradient_clip)
             
             self.disc_optimizer.step()
+            
+            disc_losses.append(disc_loss.item())
         
-        # Train Generator
+        # Average discriminator loss
+        avg_disc_loss = sum(disc_losses) / len(disc_losses) if disc_losses else disc_loss.item()
+        
+        # Train Generator (once per disc_steps)
+        noise = torch.randn(batch_size, self.noise_dim, device=self.device)
         self.gen_optimizer.zero_grad()
         
         if self.config.mixed_precision:
@@ -425,7 +449,7 @@ class GANTrainer(BaseTrainer):
         
         return {
             'gen_loss': gen_loss.item(),
-            'disc_loss': disc_loss.item(),
+            'disc_loss': avg_disc_loss,
             'disc_real_acc': real_acc.item(),
             'disc_fake_acc': fake_acc.item()
         }

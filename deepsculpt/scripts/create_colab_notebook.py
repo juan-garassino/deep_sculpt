@@ -37,7 +37,7 @@ notebook = {
             "source": [
                 "# Clone repository (update YOUR_USERNAME)\n",
                 "!git clone https://github.com/YOUR_USERNAME/deepSculpt.git\n",
-                "%cd deepSculpt/deepsculpt_v2"
+                "%cd deepSculpt/deepsculpt"
             ]
         },
         {

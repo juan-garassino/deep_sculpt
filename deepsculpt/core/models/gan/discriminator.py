@@ -143,7 +143,7 @@ class ComplexDiscriminator(BaseDiscriminator):
         x = self.leaky_relu(x)
         x = self.dropout(x)
         x = self.fc2(x)
-        x = self.sigmoid(x)
+        # Don't apply sigmoid - loss function expects logits
         
         return x
 
