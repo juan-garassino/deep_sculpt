@@ -13,7 +13,7 @@ import random
 from pathlib import Path
 
 from .pytorch_sculptor import PyTorchSculptor
-from .pytorch_shapes import PyTorchShapeFactory
+from .pytorch_shapes import ShapeType, SparseTensorHandler, PyTorchUtils
 
 
 class DataGenerator:

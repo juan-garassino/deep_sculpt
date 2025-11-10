@@ -35,7 +35,8 @@ class BaseGenerator(nn.Module, ABC):
         self.device = device
         
         # Output channels based on color mode
-        self.output_channels = 6 if color_mode == 1 else 3
+        # color_mode=0: monochrome (1 channel), color_mode=1: color (6 channels for RGB)
+        self.output_channels = 6 if color_mode == 1 else 1
         
         # Statistics tracking
         self.generation_count = 0
@@ -112,7 +113,8 @@ class BaseDiscriminator(nn.Module, ABC):
         self.device = device
         
         # Input channels based on color mode
-        self.input_channels = 6 if color_mode == 1 else 3
+        # color_mode=0: monochrome (1 channel), color_mode=1: color (6 channels for RGB)
+        self.input_channels = 6 if color_mode == 1 else 1
         
         # Statistics tracking
         self.discrimination_count = 0

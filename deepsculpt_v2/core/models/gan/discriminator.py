@@ -44,9 +44,7 @@ class SimpleDiscriminator(BaseDiscriminator):
         self.sigmoid = nn.Sigmoid()
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Reshape input from (batch, depth, height, width, channels) to (batch, channels, depth, height, width)
-        if len(x.shape) == 5:
-            x = x.permute(0, 4, 1, 2, 3)
+        # Input is already in PyTorch channels-first format: (batch, channels, depth, height, width)
         
         # Convolution blocks
         x = self.conv1(x)
@@ -112,9 +110,7 @@ class ComplexDiscriminator(BaseDiscriminator):
         self.sigmoid = nn.Sigmoid()
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Reshape input from (batch, depth, height, width, channels) to (batch, channels, depth, height, width)
-        if len(x.shape) == 5:
-            x = x.permute(0, 4, 1, 2, 3)
+        # Input is already in PyTorch channels-first format: (batch, channels, depth, height, width)
         
         # Convolution blocks
         x = self.conv1(x)
@@ -218,9 +214,7 @@ class ProgressiveDiscriminator(BaseDiscriminator):
         )
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Reshape input from (batch, depth, height, width, channels) to (batch, channels, depth, height, width)
-        if len(x.shape) == 5:
-            x = x.permute(0, 4, 1, 2, 3)
+        # Input is already in PyTorch channels-first format: (batch, channels, depth, height, width)
         
         # Convert from RGB at current resolution
         x = self.from_rgb_layers[self.current_level](x)
@@ -280,9 +274,7 @@ class ConditionalDiscriminator(BaseDiscriminator):
         self.sigmoid = nn.Sigmoid()
     
     def forward(self, x: torch.Tensor, condition: Optional[torch.Tensor] = None) -> torch.Tensor:
-        # Reshape input from (batch, depth, height, width, channels) to (batch, channels, depth, height, width)
-        if len(x.shape) == 5:
-            x = x.permute(0, 4, 1, 2, 3)
+        # Input is already in PyTorch channels-first format: (batch, channels, depth, height, width)
         
         # Convolution blocks
         x = self.conv1(x)
@@ -337,9 +329,7 @@ class SpectralNormDiscriminator(BaseDiscriminator):
         self.leaky_relu = nn.LeakyReLU(0.2)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Reshape input from (batch, depth, height, width, channels) to (batch, channels, depth, height, width)
-        if len(x.shape) == 5:
-            x = x.permute(0, 4, 1, 2, 3)
+        # Input is already in PyTorch channels-first format: (batch, channels, depth, height, width)
         
         # Convolution blocks without batch normalization (spectral norm instead)
         x = self.conv1(x)
@@ -422,9 +412,7 @@ class PatchDiscriminator(BaseDiscriminator):
         self.sigmoid = nn.Sigmoid()
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Reshape input from (batch, depth, height, width, channels) to (batch, channels, depth, height, width)
-        if len(x.shape) == 5:
-            x = x.permute(0, 4, 1, 2, 3)
+        # Input is already in PyTorch channels-first format: (batch, channels, depth, height, width)
         
         # Convolution blocks
         x = self.conv1(x)

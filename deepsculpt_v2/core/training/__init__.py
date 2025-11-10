@@ -26,7 +26,6 @@ from .schedulers import (
     CyclicMomentumScheduler,
     AdaptiveScheduler,
     SchedulerManager,
-    SchedulerFactory,
     create_warmup_cosine_scheduler,
     create_one_cycle_scheduler,
     create_gan_schedulers
@@ -68,7 +67,6 @@ __all__ = [
     "CyclicMomentumScheduler",
     "AdaptiveScheduler",
     "SchedulerManager",
-    "SchedulerFactory",
     "create_warmup_cosine_scheduler",
     "create_one_cycle_scheduler",
     "create_gan_schedulers",

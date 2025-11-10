@@ -71,7 +71,7 @@ import torch
 from enum import Enum
 from typing import Tuple, List, Dict, Any, Optional, Union
 
-from logger import (
+from core.utils.logger import (
     begin_section,
     end_section,
     log_action,
@@ -81,7 +81,7 @@ from logger import (
     log_warning,
 )
 
-from pytorch_shapes import (
+from .pytorch_shapes import (
     ShapeType,
     attach_edge_pytorch,
     attach_plane_pytorch,

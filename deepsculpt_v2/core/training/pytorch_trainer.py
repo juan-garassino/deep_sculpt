@@ -19,7 +19,10 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader, Dataset
-from torch.utils.tensorboard import SummaryWriter
+
+# TensorBoard disabled
+TENSORBOARD_AVAILABLE = False
+SummaryWriter = None
 
 import numpy as np
 import matplotlib.pyplot as plt

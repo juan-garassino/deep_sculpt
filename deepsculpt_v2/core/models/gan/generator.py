@@ -93,8 +93,8 @@ class SimpleGenerator(BaseGenerator):
         x = self.softmax(x)
         x = self.threshold_relu(x)
         
-        # Reshape to final output
-        x = x.view(-1, self.void_dim, self.void_dim, self.void_dim, self.output_channels)
+        # Output is already in PyTorch format: (batch, channels, D, H, W)
+        # No need to reshape - conv4 already outputs the correct shape
         
         return x
 

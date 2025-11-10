@@ -1,0 +1,12 @@
+{
+  "model_type": "simple",
+  "void_dim": 16,
+  "noise_dim": 50,
+  "color_mode": 0,
+  "training": {
+    "epochs": 2,
+    "batch_size": 4,
+    "learning_rate": 0.0002
+  },
+  "training_time": 6.416501998901367
+}

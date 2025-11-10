@@ -26,6 +26,7 @@ Used by:
 """
 
 import torch
+import torch.nn as nn
 import numpy as np
 import random
 import psutil
@@ -1515,24 +1516,7 @@ def optimize_model_for_sparse_tensors(model: nn.Module) -> nn.Module:
     
     end_section()
     
-    return model   def take_snapshot(self, name: str = None) -> Dict[str, Any]:
-        """
-        Take a memory snapshot.
-
-        Args:
-            name: Optional name for the snapshot
-
-        Returns:
-            Memory snapshot data
-        """
-        snapshot = {
-            "timestamp": torch.cuda.Event(enable_timing=True) if self.device.startswith("cuda") else None,
-            "name": name or f"snapshot_{len(self.snapshots)}",
-            "memory_stats": MemoryOptimizer.get_memory_stats(self.device)
-        }
-        
-        self.snapshots.append(snapshot)
-        return snapshot
+    return model
 
     def profile_operation(
         self,

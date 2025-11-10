@@ -59,7 +59,7 @@ except ImportError:
     ZARR_AVAILABLE = False
     warnings.warn("zarr not available, Zarr format disabled")
 
-from logger import (
+from core.utils.logger import (
     begin_section,
     end_section,
     log_action,
@@ -67,9 +67,10 @@ from logger import (
     log_error,
     log_info,
     log_warning,
+    set_verbose,
 )
 
-from pytorch_sculptor import PyTorchSculptor
+from .pytorch_sculptor import PyTorchSculptor
 
 class MemoryMonitor:
     """Utility class for monitoring memory usage and adjusting batch sizes."""
@@ -283,6 +284,9 @@ class PyTorchCollector:
             self.sparse_threshold = sparse_threshold
             self.compression = compression
             self.verbose = verbose
+            
+            # Set global verbose flag for logger
+            set_verbose(verbose)
             
             # Setup device
             self.device = self._setup_device(device)
@@ -541,6 +545,14 @@ class PyTorchCollector:
         sample_num = f"{sample_idx:06d}"
         
         if self.output_format == "pytorch":
+            # Ensure structure has correct shape for model compatibility
+            # PyTorchSculptor returns (D, H, W), models expect (C, D, H, W)
+            if structure.dim() == 3:
+                # (D, H, W) -> (1, D, H, W)
+                structure = structure.unsqueeze(0)
+            if colors.dim() == 3:
+                colors = colors.unsqueeze(0)
+            
             # Save as PyTorch tensors
             structure_path = self.structures_dir / f"structure_{sample_num}.pt"
             colors_path = self.colors_dir / f"colors_{sample_num}.pt"

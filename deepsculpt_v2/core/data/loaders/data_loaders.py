@@ -546,3 +546,58 @@ def create_balanced_dataloader(
         sampler=sampler,
         **kwargs
     )
+
+
+
+def create_file_based_dataloader(
+    file_paths: List[str],
+    batch_size: int = 32,
+    shuffle: bool = True,
+    num_workers: int = 0,
+    device: str = "cpu"
+) -> DataLoader:
+    """
+    Create a simple DataLoader from saved PyTorch tensor files.
+    
+    Args:
+        file_paths: List of paths to .pt files
+        batch_size: Batch size
+        shuffle: Whether to shuffle data
+        num_workers: Number of worker processes
+        device: Device to load tensors to
+        
+    Returns:
+        PyTorch DataLoader
+    """
+    from torch.utils.data import Dataset, DataLoader
+    import torch
+    
+    class FileDataset(Dataset):
+        """Simple dataset that loads saved PyTorch tensors."""
+        def __init__(self, paths, device='cpu'):
+            self.paths = paths
+            self.device = device
+        
+        def __len__(self):
+            return len(self.paths)
+        
+        def __getitem__(self, idx):
+            data = torch.load(self.paths[idx])
+            if isinstance(data, torch.Tensor):
+                # Ensure correct shape: (C, D, H, W)
+                if data.dim() == 3:
+                    # (D, H, W) -> (1, D, H, W)
+                    data = data.unsqueeze(0)
+                elif data.dim() == 4 and data.shape[1] == 1:
+                    # Already correct shape (C, D, H, W)
+                    pass
+                return data.to(self.device)
+            return data
+    
+    dataset = FileDataset(file_paths, device)
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers
+    )

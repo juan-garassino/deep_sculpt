@@ -20,10 +20,13 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
 
 import numpy as np
 from datetime import datetime
+
+# TensorBoard disabled due to compatibility issues
+TENSORBOARD_AVAILABLE = False
+SummaryWriter = None
 
 try:
     import wandb
@@ -161,9 +164,11 @@ class BaseTrainer(ABC):
         self.logger = logging.getLogger(self.__class__.__name__)
         
         # Setup TensorBoard
-        if self.config.use_tensorboard:
+        if self.config.use_tensorboard and TENSORBOARD_AVAILABLE:
             self.writer = SummaryWriter(log_dir=self.config.log_dir)
         else:
+            if self.config.use_tensorboard and not TENSORBOARD_AVAILABLE:
+                print("Warning: TensorBoard requested but not available")
             self.writer = None
     
     def _setup_experiment_tracking(self):

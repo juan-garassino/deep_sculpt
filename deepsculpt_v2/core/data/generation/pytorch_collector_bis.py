@@ -59,7 +59,7 @@ except ImportError:
     ZARR_AVAILABLE = False
     warnings.warn("zarr not available, Zarr format disabled")
 
-from logger import (
+from core.utils.logger import (
     begin_section,
     end_section,
     log_action,
@@ -69,7 +69,7 @@ from logger import (
     log_warning,
 )
 
-from pytorch_sculptor import PyTorchSculptor
+from .pytorch_sculptor import PyTorchSculptor
 
 class MemoryMonitor:
     """Utility class for monitoring memory usage and adjusting batch sizes."""

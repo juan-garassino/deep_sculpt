@@ -568,8 +568,20 @@ class RichLogger:
         self.logger.handlers.clear()
 
 
-# Global logger instance
+# Global logger instance and verbose flag
 _global_logger: Optional[RichLogger] = None
+_global_verbose: bool = True  # Default to verbose
+
+
+def set_verbose(verbose: bool):
+    """Set global verbose flag."""
+    global _global_verbose
+    _global_verbose = verbose
+
+
+def get_verbose() -> bool:
+    """Get global verbose flag."""
+    return _global_verbose
 
 
 def get_logger(
@@ -608,42 +620,54 @@ def setup_logger(
 # Convenience functions for backward compatibility
 def begin_section(title: str, style: str = "bold blue"):
     """Begin a logging section."""
+    if not _global_verbose:
+        return
     logger = get_logger()
     logger.begin_section(title, style)
 
 
 def end_section(title: Optional[str] = None):
     """End a logging section."""
+    if not _global_verbose:
+        return
     logger = get_logger()
     logger.end_section(title)
 
 
-def log_action(message: str):
+def log_action(message: str, **kwargs):
     """Log an action."""
+    if not _global_verbose:
+        return
     logger = get_logger()
     logger.info(message)
 
 
-def log_success(message: str):
+def log_success(message: str, **kwargs):
     """Log a success message."""
+    if not _global_verbose:
+        return
     logger = get_logger()
     logger.success(message)
 
 
-def log_error(message: str):
+def log_error(message: str, **kwargs):
     """Log an error message."""
+    # Always show errors regardless of verbose setting
     logger = get_logger()
     logger.error(message)
 
 
-def log_warning(message: str):
+def log_warning(message: str, **kwargs):
     """Log a warning message."""
+    # Always show warnings regardless of verbose setting
     logger = get_logger()
     logger.warning(message)
 
 
-def log_info(message: str):
+def log_info(message: str, **kwargs):
     """Log an info message."""
+    if not _global_verbose:
+        return
     logger = get_logger()
     logger.info(message)
 
