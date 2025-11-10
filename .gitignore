@@ -20,3 +20,4 @@ results
 results/snapshots/*
 results/checkpoints/*
 results/saves/*
+results/network/variables/*.data*
