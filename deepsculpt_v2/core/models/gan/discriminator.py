@@ -66,7 +66,7 @@ class SimpleDiscriminator(BaseDiscriminator):
         # Flatten and classify
         x = x.view(x.size(0), -1)
         x = self.fc(x)
-        x = self.sigmoid(x)
+        # Don't apply sigmoid - loss function expects logits
         
         return x
 
