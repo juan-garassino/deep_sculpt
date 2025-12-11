@@ -32,8 +32,9 @@ class TimeEmbedding(nn.Module):
         self.register_buffer('emb', emb)
         
         # Linear layers to process embeddings
+        # Output dimension should match embedding_dim for compatibility with ResBlocks
         self.linear1 = nn.Linear(embedding_dim, embedding_dim * 4)
-        self.linear2 = nn.Linear(embedding_dim * 4, embedding_dim * 4)
+        self.linear2 = nn.Linear(embedding_dim * 4, embedding_dim)  # Output same as input
         self.act = nn.SiLU()
     
     def forward(self, timesteps: torch.Tensor) -> torch.Tensor:
@@ -141,9 +142,9 @@ class AttentionBlock3D(nn.Module):
         
         # Reshape for attention computation
         spatial_size = depth * height * width
-        q = q.view(batch, self.num_heads, self.head_dim, spatial_size)
-        k = k.view(batch, self.num_heads, self.head_dim, spatial_size)
-        v = v.view(batch, self.num_heads, self.head_dim, spatial_size)
+        q = q.reshape(batch, self.num_heads, self.head_dim, spatial_size)
+        k = k.reshape(batch, self.num_heads, self.head_dim, spatial_size)
+        v = v.reshape(batch, self.num_heads, self.head_dim, spatial_size)
         
         # Compute attention
         scale = self.head_dim ** -0.5
@@ -152,7 +153,7 @@ class AttentionBlock3D(nn.Module):
         
         # Apply attention to values
         out = torch.einsum('bhst,bhdt->bhds', attn, v)
-        out = out.view(batch, channels, depth, height, width)
+        out = out.reshape(batch, channels, depth, height, width)
         
         # Project and add residual
         out = self.proj(out)
@@ -297,14 +298,26 @@ class UNet3D(BaseDiffusionModel):
         h = self.input_proj(x)
         
         # Encoder path with skip connections
-        skip_connections = []
+        skip_connections = [h]  # Start with input projection output
         
-        for i, (block, downsample) in enumerate(zip(self.encoder_blocks, self.encoder_downsample)):
-            h = block[0](h, time_emb)  # ResBlock
-            if len(block) > 1:  # Attention block
-                h = block[1](h)
-            skip_connections.append(h)
-            h = downsample(h)
+        block_idx = 0
+        for level_idx in range(len(self.channel_mult)):
+            # Process all res_blocks at this level
+            for _ in range(self.num_res_blocks):
+                if block_idx < len(self.encoder_blocks):
+                    block = self.encoder_blocks[block_idx]
+                    h = block[0](h, time_emb)  # ResBlock
+                    if len(block) > 1:  # Attention block
+                        h = block[1](h)
+                    skip_connections.append(h)
+                    block_idx += 1
+            
+            # Downsample after all blocks at this level (except last)
+            if level_idx < len(self.encoder_downsample):
+                downsample = self.encoder_downsample[level_idx]
+                if not isinstance(downsample, nn.Identity):
+                    h = downsample(h)
+                    skip_connections.append(h)
         
         # Middle block
         h = self.middle_block[0](h, time_emb)  # First ResBlock
@@ -313,15 +326,17 @@ class UNet3D(BaseDiffusionModel):
         
         # Decoder path with skip connections
         for i, (block, upsample) in enumerate(zip(self.decoder_blocks, self.decoder_upsample)):
-            # Add skip connection
-            skip = skip_connections.pop()
-            h = torch.cat([h, skip], dim=1)
+            # Add skip connection if available
+            if skip_connections:
+                skip = skip_connections.pop()
+                h = torch.cat([h, skip], dim=1)
             
             h = block[0](h, time_emb)  # ResBlock
             if len(block) > 1:  # Attention block
                 h = block[1](h)
             
-            h = upsample(h)
+            if not isinstance(upsample, nn.Identity):
+                h = upsample(h)
         
         # Output projection
         h = self.output_proj(h)

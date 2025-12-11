@@ -197,16 +197,56 @@ class DiffusionTrainer(BaseTrainer):
         """
         # Extract data from batch
         if isinstance(batch, dict):
-            x_0 = batch.get('data', batch.get('structure', batch.get('x', None)))
+            structure = batch.get('data', batch.get('structure', batch.get('x', None)))
             conditioning = batch.get(self.conditioning_key) if self.conditioning_key else None
+            
+            if structure is None:
+                raise ValueError("Could not find data in batch")
+            
+            structure = structure.to(self.device)
+            
+            # Convert to proper PyTorch format: [batch, channels, depth, height, width]
+            # Need to determine expected channels from the model
+            expected_channels = getattr(self.model, 'in_channels', 1)
+            
+            if structure.dim() == 4:  # [batch, depth, height, width]
+                if expected_channels == 1:  # Monochrome mode
+                    # Add single channel dimension at position 1 (PyTorch format)
+                    x_0 = structure.unsqueeze(1)
+                elif expected_channels == 6:  # Color mode with 6 channels
+                    # For color mode, we need to create 6 channels from structure and colors
+                    colors = batch.get("colors", structure)  # Use structure as fallback
+                    colors = colors.to(self.device)
+                    # Create 6 channels - this is a simplified approach
+                    x_0 = torch.stack([
+                        structure, colors, structure, colors, structure, colors
+                    ], dim=1)  # Stack along channel dimension
+                elif expected_channels == 3:  # Alternative color mode with 3 channels
+                    # Create 3 channels from structure and colors
+                    colors = batch.get("colors", structure)
+                    colors = colors.to(self.device)
+                    combined = (structure + colors) / 2
+                    x_0 = torch.stack([structure, colors, combined], dim=1)
+                else:
+                    # Default: just add single channel
+                    x_0 = structure.unsqueeze(1)
+            elif structure.dim() == 5:  # Already has channel dimension
+                x_0 = structure
+            else:
+                x_0 = structure
+            
+            # Convert to float if needed (diffusion models expect float tensors)
+            if x_0.dtype != torch.float32:
+                x_0 = x_0.float()
+                
         else:
-            x_0 = batch
+            x_0 = batch.to(self.device)
             conditioning = None
+            
+            # Convert to float if needed
+            if x_0.dtype != torch.float32:
+                x_0 = x_0.float()
         
-        if x_0 is None:
-            raise ValueError("Could not find data in batch")
-        
-        x_0 = x_0.to(self.device)
         if conditioning is not None:
             conditioning = conditioning.to(self.device)
         

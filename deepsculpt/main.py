@@ -319,10 +319,17 @@ class DeepSculptV2Main:
         # Create model factory
         model_factory = PyTorchModelFactoryV2()
         
+        # Determine number of channels based on color mode
+        # For diffusion models: monochrome=1, color=6 (structure + colors with more detail)
+        color_mode = getattr(args, 'color', False)
+        num_channels = 6 if color_mode else 1
+        
         # Create diffusion model
         model = model_factory.create_diffusion_model(
             model_type="unet3d",
             void_dim=args.void_dim,
+            in_channels=num_channels,
+            out_channels=num_channels,
             timesteps=args.timesteps,
             sparse=args.sparse
         ).to(self.device)
@@ -333,7 +340,8 @@ class DeepSculptV2Main:
             schedule_type=args.noise_schedule,
             timesteps=args.timesteps,
             beta_start=args.beta_start,
-            beta_end=args.beta_end
+            beta_end=args.beta_end,
+            device=self.device  # Use the same device as the main app
         )
         
         # Create diffusion pipeline
@@ -341,7 +349,7 @@ class DeepSculptV2Main:
         diffusion_pipeline = Diffusion3DPipeline(
             model=model,
             noise_scheduler=noise_scheduler,
-            timesteps=args.timesteps
+            device=self.device
         )
         
         # Create optimizer
@@ -358,23 +366,31 @@ class DeepSculptV2Main:
                 optimizer, T_max=args.epochs
             )
         
+        # Create training configuration
+        training_config = TrainingConfig(
+            batch_size=args.batch_size,
+            learning_rate=args.learning_rate,
+            epochs=args.epochs,
+            mixed_precision=args.mixed_precision,
+            use_tensorboard=False,
+            use_wandb=False,
+            use_mlflow=False
+        )
+        
         # Setup trainer
         trainer = DiffusionTrainer(
             model=model,
-            diffusion_pipeline=diffusion_pipeline,
             optimizer=optimizer,
+            config=training_config,
+            noise_scheduler=noise_scheduler,
             scheduler=scheduler,
-            device=self.device,
-            mixed_precision=args.mixed_precision
+            device=self.device
         )
         
         # Train the model
         print(f"Starting diffusion training for {args.epochs} epochs")
         metrics = trainer.train(
-            data_loader=data_loader,
-            epochs=args.epochs,
-            checkpoint_dir=results_dir / "checkpoints",
-            experiment_tracker=experiment_tracker
+            train_dataloader=data_loader
         )
         
         # Save final model

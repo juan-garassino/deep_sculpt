@@ -48,3 +48,47 @@
 2025-12-11 12:09:43,294 - GANTrainer - INFO - Epoch 1/1 completed in 5.24s - Train Loss: 0.0000, Val Loss: 0.0000
 2025-12-11 12:09:44,244 - GANTrainer - INFO - GAN checkpoint saved: ./checkpoints/checkpoint_epoch_1.pth
 2025-12-11 12:09:44,247 - GANTrainer - INFO - Training completed
+2025-12-11 12:15:16,144 - DiffusionTrainer - INFO - Diffusion trainer initialized with epsilon prediction
+2025-12-11 12:16:20,686 - DiffusionTrainer - INFO - Diffusion trainer initialized with epsilon prediction
+2025-12-11 12:16:20,687 - DiffusionTrainer - INFO - Starting training for 1 epochs
+2025-12-11 12:16:20,687 - DiffusionTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:17:39,758 - DiffusionTrainer - INFO - Diffusion trainer initialized with epsilon prediction
+2025-12-11 12:17:39,759 - DiffusionTrainer - INFO - Starting training for 1 epochs
+2025-12-11 12:17:39,759 - DiffusionTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:20:17,239 - DiffusionTrainer - INFO - Diffusion trainer initialized with epsilon prediction
+2025-12-11 12:20:17,240 - DiffusionTrainer - INFO - Starting training for 1 epochs
+2025-12-11 12:20:17,240 - DiffusionTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:21:03,473 - DiffusionTrainer - INFO - Diffusion trainer initialized with epsilon prediction
+2025-12-11 12:21:03,474 - DiffusionTrainer - INFO - Starting training for 1 epochs
+2025-12-11 12:21:03,474 - DiffusionTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:21:59,345 - DiffusionTrainer - INFO - Diffusion trainer initialized with epsilon prediction
+2025-12-11 12:21:59,345 - DiffusionTrainer - INFO - Starting training for 1 epochs
+2025-12-11 12:21:59,346 - DiffusionTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:23:48,446 - DiffusionTrainer - INFO - Diffusion trainer initialized with epsilon prediction
+2025-12-11 12:23:48,446 - DiffusionTrainer - INFO - Starting training for 1 epochs
+2025-12-11 12:23:48,446 - DiffusionTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:25:47,379 - DiffusionTrainer - INFO - Diffusion trainer initialized with epsilon prediction
+2025-12-11 12:25:47,381 - DiffusionTrainer - INFO - Starting training for 1 epochs
+2025-12-11 12:25:47,381 - DiffusionTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:26:36,845 - DiffusionTrainer - INFO - Diffusion trainer initialized with epsilon prediction
+2025-12-11 12:26:36,845 - DiffusionTrainer - INFO - Starting training for 1 epochs
+2025-12-11 12:26:36,846 - DiffusionTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:28:13,505 - DiffusionTrainer - INFO - Diffusion trainer initialized with epsilon prediction
+2025-12-11 12:28:13,506 - DiffusionTrainer - INFO - Starting training for 1 epochs
+2025-12-11 12:28:13,506 - DiffusionTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:29:03,807 - DiffusionTrainer - INFO - Diffusion trainer initialized with epsilon prediction
+2025-12-11 12:29:03,807 - DiffusionTrainer - INFO - Starting training for 1 epochs
+2025-12-11 12:29:03,807 - DiffusionTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:30:18,323 - DiffusionTrainer - INFO - Diffusion trainer initialized with epsilon prediction
+2025-12-11 12:30:18,323 - DiffusionTrainer - INFO - Starting training for 1 epochs
+2025-12-11 12:30:18,324 - DiffusionTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:32:12,925 - DiffusionTrainer - INFO - Diffusion trainer initialized with epsilon prediction
+2025-12-11 12:32:12,925 - DiffusionTrainer - INFO - Starting training for 1 epochs
+2025-12-11 12:32:12,925 - DiffusionTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:33:59,960 - DiffusionTrainer - INFO - Diffusion trainer initialized with epsilon prediction
+2025-12-11 12:33:59,961 - DiffusionTrainer - INFO - Starting training for 1 epochs
+2025-12-11 12:33:59,961 - DiffusionTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:36:43,621 - DiffusionTrainer - INFO - Epoch 0, Batch 0: Diffusion Loss: 186.5567, MSE Loss: 186.5567
+2025-12-11 12:49:23,274 - DiffusionTrainer - INFO - Epoch 1/1 completed in 923.28s - Train Loss: 0.0000, Val Loss: 0.0000
+2025-12-11 12:51:10,508 - DiffusionTrainer - INFO - Diffusion checkpoint saved: ./checkpoints/checkpoint_epoch_1.pth
+2025-12-11 12:51:10,934 - DiffusionTrainer - INFO - Training completed
