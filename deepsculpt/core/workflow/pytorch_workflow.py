@@ -45,34 +45,64 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import imageio
 
-# Cloud storage
-from google.cloud import storage
+# Cloud storage (optional)
+try:
+    from google.cloud import storage
+    GOOGLE_CLOUD_AVAILABLE = True
+except ImportError:
+    GOOGLE_CLOUD_AVAILABLE = False
+    storage = None
 
 # Colorful console output
 from colorama import Fore, Style
 
-# Workflow management
-from prefect import task, Flow, Parameter
-from prefect.schedules import IntervalSchedule
-from prefect.executors import LocalDaskExecutor
-from prefect.run_configs import LocalRun
+# Workflow management (optional)
+try:
+    from prefect import task, Flow, Parameter
+    from prefect.schedules import IntervalSchedule
+    from prefect.executors import LocalDaskExecutor
+    from prefect.run_configs import LocalRun
+    PREFECT_AVAILABLE = True
+except ImportError:
+    PREFECT_AVAILABLE = False
+    # Create dummy decorators for when prefect is not available
+    def task(func):
+        return func
+    Flow = None
+    Parameter = None
+    IntervalSchedule = None
+    LocalDaskExecutor = None
+    LocalRun = None
 
-# ML experiment tracking
-import mlflow
-from mlflow.tracking import MlflowClient
+# ML experiment tracking (optional)
+try:
+    import mlflow
+    from mlflow.tracking import MlflowClient
+    MLFLOW_AVAILABLE = True
+except ImportError:
+    MLFLOW_AVAILABLE = False
+    mlflow = None
+    MlflowClient = None
 
 # Import PyTorch model and trainer modules
-from pytorch_models import PyTorchModelFactory
-from pytorch_trainer import GANTrainer, DiffusionTrainer, TrainingConfig
-from pytorch_collector import PyTorchCollector
-from pytorch_curator import PyTorchCurator
+try:
+    from ..models.pytorch_models import PyTorchModelFactory
+    from ..training.pytorch_trainer import GANTrainer
+    from ..training.diffusion_trainer import DiffusionTrainer
+    from ..training.base_trainer import TrainingConfig
+    from ..data.generation.pytorch_collector import PyTorchCollector
+    from ..data.transforms.pytorch_curator import PyTorchCurator
+except ImportError as e:
+    # Fallback for when modules are not available
+    PyTorchModelFactory = None
+    GANTrainer = None
+    DiffusionTrainer = None
+    TrainingConfig = None
+    PyTorchCollector = None
+    PyTorchCurator = None
 
-# Import legacy modules for backward compatibility
-from models import ModelFactory as TensorFlowModelFactory
-from trainer import DeepSculptTrainer, DataFrameDataLoader
 
-
-class PyTorchManager:
+class PyTorchWorkflowManager:
     """
     PyTorch-based utility manager for the DeepSculpt project.
     Handles PyTorch model creation, data loading, visualization, and MLflow integration.
@@ -167,6 +197,9 @@ class PyTorchManager:
         Returns:
             Tuple of (volumes_data, materials_data) - format depends on framework
         """
+        if not GOOGLE_CLOUD_AVAILABLE:
+            raise ImportError("Google Cloud Storage not available. Install google-cloud-storage to use GCP functionality.")
+        
         self.path_volumes = path_volumes or "volume_data.npy"
         self.path_materials = path_materials or "material_data.npy"
         
@@ -218,6 +251,9 @@ class PyTorchManager:
         Args:
             snapshot_name: Name of the snapshot file to upload
         """
+        if not GOOGLE_CLOUD_AVAILABLE:
+            raise ImportError("Google Cloud Storage not available. Install google-cloud-storage to use GCP functionality.")
+        
         STORAGE_FILENAME = snapshot_name
         storage_location = f"results/{STORAGE_FILENAME}"
         
@@ -602,7 +638,7 @@ class PyTorchManager:
 
 
 # Backward compatibility - alias the original Manager to PyTorchManager
-Manager = PyTorchManager
+Manager = PyTorchWorkflowManager
 
 
 # Enhanced Prefect task definitions for PyTorch

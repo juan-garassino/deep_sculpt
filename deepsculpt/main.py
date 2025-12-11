@@ -94,11 +94,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 # Import DeepSculpt v2.0 modules
 try:
-    from core.models.model_factory import PyTorchModelFactory
+    from core.models.model_factory import PyTorchModelFactory as PyTorchModelFactoryV2
     from core.models.pytorch_models import *
-    from core.training.pytorch_trainer import GANTrainer
+    from core.training.gan_trainer import GANTrainer
     from core.training.diffusion_trainer import DiffusionTrainer
-    from core.training.base_trainer import BaseTrainer
+    from core.training.base_trainer import BaseTrainer, TrainingConfig
     from core.data.generation.pytorch_collector import PyTorchCollector
     from core.data.generation.pytorch_sculptor import PyTorchSculptor
     from core.data.transforms.pytorch_curator import PyTorchCurator
@@ -106,7 +106,7 @@ try:
     from core.visualization.pytorch_visualization import PyTorchVisualizer
     from core.workflow.pytorch_workflow import PyTorchWorkflowManager
     from core.utils.pytorch_utils import PyTorchUtils
-    from core.utils.logger import PyTorchLogger
+    from core.utils.logger import RichLogger
     
 except ImportError as e:
     print(f"Error importing DeepSculpt v2.0 modules: {e}")
@@ -121,7 +121,7 @@ class DeepSculptV2Main:
     def __init__(self, args=None):
         """Initialize the main orchestrator with device detection and configuration."""
         self.device = self._setup_device(args)
-        self.logger = PyTorchLogger(log_level="INFO")
+        self.logger = RichLogger(level="INFO")
         self.config = self._load_config(args)
         
         print(f"DeepSculpt v2.0 - Using device: {self.device}")
@@ -186,19 +186,22 @@ class DeepSculptV2Main:
         # Create data loader
         data_loader = self._create_data_loader(args)
         
+        # Create model factory
+        model_factory = PyTorchModelFactoryV2()
+        
         # Create models
-        generator = PyTorchModelFactory.create_gan_generator(
+        generator = model_factory.create_gan_generator(
             model_type=args.model_type,
             void_dim=args.void_dim,
             noise_dim=args.noise_dim,
-            color_mode=1 if args.color else 0,
+            color_mode=0,  # Use monochrome mode for single channel
             sparse=args.sparse
         ).to(self.device)
         
-        discriminator = PyTorchModelFactory.create_gan_discriminator(
-            model_type=args.model_type,
+        discriminator = model_factory.create_gan_discriminator(
+            model_type="simple",  # Use simple discriminator for skip generator
             void_dim=args.void_dim,
-            color_mode=1 if args.color else 0,
+            color_mode=0,  # Use monochrome mode for single channel
             sparse=args.sparse
         ).to(self.device)
         
@@ -233,28 +236,37 @@ class DeepSculptV2Main:
                 disc_optimizer, step_size=args.scheduler_step, gamma=args.scheduler_gamma
             )
         
+        # Create training configuration
+        training_config = TrainingConfig(
+            batch_size=args.batch_size,
+            learning_rate=args.learning_rate,
+            epochs=args.epochs,
+            beta1=args.beta1,
+            beta2=args.beta2,
+            mixed_precision=args.mixed_precision,
+            gradient_clip=args.gradient_clip,
+            use_tensorboard=False,  # Disable TensorBoard since it's not available
+            use_wandb=False,
+            use_mlflow=False
+        )
+        
         # Setup trainer
         trainer = GANTrainer(
             generator=generator,
             discriminator=discriminator,
             gen_optimizer=gen_optimizer,
             disc_optimizer=disc_optimizer,
+            config=training_config,
             gen_scheduler=gen_scheduler,
             disc_scheduler=disc_scheduler,
             device=self.device,
-            mixed_precision=args.mixed_precision,
-            gradient_clip=args.gradient_clip
+            noise_dim=args.noise_dim
         )
         
         # Train the model
         print(f"Starting training for {args.epochs} epochs")
         metrics = trainer.train(
-            data_loader=data_loader,
-            epochs=args.epochs,
-            checkpoint_dir=results_dir / "checkpoints",
-            snapshot_dir=results_dir / "snapshots",
-            snapshot_freq=args.snapshot_freq,
-            experiment_tracker=experiment_tracker
+            train_dataloader=data_loader
         )
         
         # Save final models
@@ -304,8 +316,11 @@ class DeepSculptV2Main:
         # Create data loader
         data_loader = self._create_data_loader(args)
         
+        # Create model factory
+        model_factory = PyTorchModelFactoryV2()
+        
         # Create diffusion model
-        model = PyTorchModelFactory.create_diffusion_model(
+        model = model_factory.create_diffusion_model(
             model_type="unet3d",
             void_dim=args.void_dim,
             timesteps=args.timesteps,
@@ -452,8 +467,11 @@ class DeepSculptV2Main:
                 "sparse": False
             }
         
+        # Create model factory
+        model_factory = PyTorchModelFactoryV2()
+        
         # Create model
-        generator = PyTorchModelFactory.create_gan_generator(
+        generator = model_factory.create_gan_generator(
             model_type=config['model_type'],
             void_dim=config['void_dim'],
             noise_dim=config['noise_dim'],
@@ -503,8 +521,11 @@ class DeepSculptV2Main:
         checkpoint = torch.load(args.checkpoint, map_location=self.device)
         config = checkpoint['config']
         
+        # Create model factory
+        model_factory = PyTorchModelFactoryV2()
+        
         # Create model
-        model = PyTorchModelFactory.create_diffusion_model(
+        model = model_factory.create_diffusion_model(
             model_type="unet3d",
             void_dim=config['void_dim'],
             timesteps=config.get('timesteps', 1000),
@@ -633,8 +654,11 @@ class DeepSculptV2Main:
         """Run comprehensive performance benchmarks."""
         print(f"Benchmarking {args.model_type} with batch size {args.batch_size}")
         
+        # Create model factory
+        model_factory = PyTorchModelFactoryV2()
+        
         # Create model
-        model = PyTorchModelFactory.create_gan_generator(
+        model = model_factory.create_gan_generator(
             model_type=args.model_type,
             void_dim=args.void_dim,
             noise_dim=args.noise_dim,
@@ -699,35 +723,28 @@ class DeepSculptV2Main:
     
     def _create_data_loader(self, args):
         """Create data loader based on arguments."""
-        if hasattr(args, 'data_folder') and args.data_folder:
-            # Create streaming data loader
-            data_loader = StreamingDataLoader(
-                data_paths=[args.data_folder],
-                batch_size=args.batch_size,
-                num_workers=getattr(args, 'num_workers', 4),
-                sparse_threshold=getattr(args, 'sparse_threshold', 0.1) if args.sparse else 1.0
-            )
-            return data_loader
-        else:
-            # Generate data on the fly
-            sculptor_config = {
-                "void_dim": args.void_dim,
-                "num_shapes": getattr(args, 'num_shapes', 5)
-            }
-            
-            collector = PyTorchCollector(
-                sculptor_config=sculptor_config,
-                device=self.device
-            )
-            
-            dataset = collector.create_streaming_dataset(1000)  # Default size
-            
-            return torch.utils.data.DataLoader(
-                dataset,
-                batch_size=args.batch_size,
-                shuffle=True,
-                num_workers=getattr(args, 'num_workers', 4)
-            )
+        # Generate data on the fly using PyTorchCollector
+        sculptor_config = {
+            "void_dim": args.void_dim,
+            "edges": (2, 0.3, 0.5),  # 2 edges with size ratio between 0.3-0.5
+            "planes": (1, 0.3, 0.5),  # 1 plane
+            "pipes": (1, 0.3, 0.5)    # 1 pipe
+        }
+        
+        collector = PyTorchCollector(
+            sculptor_config=sculptor_config,
+            device=self.device
+        )
+        
+        # Create a small dataset for testing (10 samples)
+        dataset = collector.create_streaming_dataset(10)
+        
+        return torch.utils.data.DataLoader(
+            dataset,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=0  # Use 0 for CPU to avoid multiprocessing issues
+        )
     
     def _setup_mlflow_tracking(self, args, results_dir):
         """Setup MLflow experiment tracking."""

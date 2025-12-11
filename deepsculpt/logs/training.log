@@ -1,0 +1,50 @@
+2025-12-11 11:33:14,188 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:33:14,188 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:34:43,513 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:34:43,513 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:35:11,572 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:35:11,573 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:35:36,788 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:35:36,788 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:36:39,637 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:36:39,638 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:37:50,191 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:37:50,191 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:39:07,335 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:39:07,335 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:42:34,333 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:42:34,333 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:43:07,436 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:43:07,436 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:43:44,196 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:43:44,196 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:47:55,653 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:47:55,653 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:50:17,505 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:50:17,505 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:51:42,081 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:51:42,081 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:53:40,508 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:53:40,508 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:54:09,467 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:54:09,467 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:56:33,278 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:56:33,278 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:57:41,457 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:57:41,457 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 11:59:44,416 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 11:59:44,416 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:01:50,152 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 12:01:50,152 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:08:07,264 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 12:08:07,265 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:08:08,488 - GANTrainer - INFO - Epoch 0, Batch 0: Gen Loss: 1858.7035, Disc Loss: 58.7758
+2025-12-11 12:08:12,348 - GANTrainer - INFO - Epoch 1/1 completed in 5.08s - Train Loss: 0.0000, Val Loss: 0.0000
+2025-12-11 12:08:13,999 - GANTrainer - INFO - GAN checkpoint saved: ./checkpoints/checkpoint_epoch_1.pth
+2025-12-11 12:08:14,001 - GANTrainer - INFO - Training completed
+2025-12-11 12:09:38,056 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 12:09:38,056 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 12:09:39,202 - GANTrainer - INFO - Epoch 0, Batch 0: Gen Loss: 1115.7830, Disc Loss: 51.1491
+2025-12-11 12:09:43,294 - GANTrainer - INFO - Epoch 1/1 completed in 5.24s - Train Loss: 0.0000, Val Loss: 0.0000
+2025-12-11 12:09:44,244 - GANTrainer - INFO - GAN checkpoint saved: ./checkpoints/checkpoint_epoch_1.pth
+2025-12-11 12:09:44,247 - GANTrainer - INFO - Training completed

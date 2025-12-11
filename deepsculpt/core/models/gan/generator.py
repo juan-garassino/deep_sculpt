@@ -234,8 +234,8 @@ class SkipGenerator(BaseGenerator):
         x = self.conv4(x)
         x = self.threshold_relu(x)
         
-        # Reshape to final output
-        x = x.view(-1, self.void_dim, self.void_dim, self.void_dim, self.output_channels)
+        # Reshape to final output in PyTorch format (channels first)
+        x = x.view(-1, self.output_channels, self.void_dim, self.void_dim, self.void_dim)
         
         return x
 

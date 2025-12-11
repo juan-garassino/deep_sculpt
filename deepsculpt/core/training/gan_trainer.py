@@ -266,6 +266,33 @@ class GANTrainer(BaseTrainer):
         for batch_idx, batch in enumerate(dataloader):
             if isinstance(batch, (list, tuple)):
                 real_data = batch[0].to(self.device)
+            elif isinstance(batch, dict):
+                # Handle dictionary batch format from StreamingDataset
+                structure = batch["structure"].to(self.device)
+                
+                # Get color mode from discriminator model
+                color_mode = getattr(self.discriminator, 'color_mode', 0)
+                
+                # The actual discriminator expects PyTorch format: [batch, channels, depth, height, width]
+                # For monochrome: 1 channel, for color: 6 channels
+                if structure.dim() == 4:  # [batch, depth, height, width]
+                    if color_mode == 0:  # Monochrome mode expects 1 channel
+                        # Add single channel dimension at position 1 (PyTorch format)
+                        # [batch, depth, height, width] -> [batch, 1, depth, height, width]
+                        real_data = structure.unsqueeze(1)
+                    else:  # Color mode expects 6 channels
+                        # For color mode, we'd need to create 6 channels from structure and colors
+                        colors = batch["colors"].to(self.device)
+                        # Create 6 channels - this is a simplified approach
+                        real_data = torch.stack([
+                            structure, colors, structure, colors, structure, colors
+                        ], dim=1)  # Stack along channel dimension
+                else:
+                    real_data = structure
+                
+                # Convert to float if needed (models expect float tensors)
+                if real_data.dtype != torch.float32:
+                    real_data = real_data.float()
             else:
                 real_data = batch.to(self.device)
             
