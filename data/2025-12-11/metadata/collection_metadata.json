@@ -1,0 +1,51 @@
+{
+  "collection_info": {
+    "num_samples": 5,
+    "output_format": "pytorch",
+    "device": "cpu",
+    "sparse_mode": true,
+    "compression": null,
+    "date": "2025-12-11",
+    "timestamp": "2025-12-11T13:47:02.875246"
+  },
+  "sculptor_config": {
+    "void_dim": 32,
+    "edges": [
+      2,
+      0.3,
+      0.5
+    ],
+    "planes": [
+      1,
+      0.3,
+      0.5
+    ],
+    "pipes": [
+      1,
+      0.3,
+      0.5
+    ]
+  },
+  "generation_stats": {
+    "total_samples": 5,
+    "generation_time": 0.05454516410827637,
+    "memory_usage": {
+      "gpu_allocated": 0.0,
+      "gpu_reserved": 0.0,
+      "gpu_max": 0.0,
+      "cpu_memory": 0.35491180419921875,
+      "system_available": 5.6052398681640625,
+      "system_percent": 65.0
+    },
+    "batch_sizes": [
+      5
+    ],
+    "errors": 5
+  },
+  "sample_paths": [],
+  "directory_structure": {
+    "base_dir": "data",
+    "date_dir": "data/2025-12-11",
+    "samples_dir": "data/2025-12-11/pytorch_samples"
+  }
+}

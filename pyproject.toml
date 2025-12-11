@@ -1,28 +1,371 @@
-[tool.poetry]
-name = "deepsculpt"
-version = "0.1.0"
-description = ""
-authors = ["Juan Garassino <juan.garassino@gmail.com>"]
-readme = "README.md"
-
-[tool.poetry.dependencies]
-python = "^3.10"
-numpy = ">=1.19.5"
-tensorflow = ">=2.6.0"
-black = ">=22.0.0"
-ipykernel = ">=6.0.0"
-matplotlib = ">=3.4.0"
-scikit-learn = ">=1.0.0"
-colorama = ">=0.4.4"
-google-cloud-bigquery = "<3.0.0"
-google-cloud-storage = ">=2.0.0"
-mlflow = "1.27.0"
-imageio = ">=2.9.0"
-scipy = ">=1.7.0"
-plotly = ">=5.0.0"
-nbformat = ">=5.1.0"
-
-
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deepsculpt"
+version = "2.0.0"
+description = "DeepSculpt v2.0 - Modern PyTorch-based 3D Generative Models with Diffusion and Sparse Tensor Support"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "DeepSculpt Team", email = "team@deepsculpt.ai"}
+]
+maintainers = [
+    {name = "DeepSculpt Team", email = "team@deepsculpt.ai"}
+]
+keywords = [
+    "3d", "generative", "pytorch", "gan", "diffusion", "voxel", 
+    "sculpture", "sparse-tensors", "deep-learning", "ai"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+requires-python = ">=3.9"
+
+# Core PyTorch dependencies
+dependencies = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "torchaudio>=2.0.0",
+    "numpy>=1.21.0,<2.0.0",
+    "scipy>=1.9.0",
+    "scikit-learn>=1.1.0",
+    "pandas>=1.5.0",
+    "matplotlib>=3.6.0",
+    "plotly>=5.11.0",
+    "Pillow>=9.0.0",
+    "tqdm>=4.64.0",
+    "pyyaml>=6.0",
+    "h5py>=3.7.0",
+    "zarr>=2.12.0",
+    "imageio>=2.22.0",
+    "rich>=12.0.0",
+    "typer>=0.7.0",
+    "click>=8.0.0",
+]
+
+[project.optional-dependencies]
+# Development dependencies with modern tooling
+dev = [
+    "pytest>=7.2.0",
+    "pytest-cov>=4.0.0",
+    "pytest-xdist>=3.1.0",
+    "pytest-benchmark>=4.0.0",
+    "pytest-mock>=3.10.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "ruff>=0.0.254",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+    "jupyter>=1.0.0",
+    "ipykernel>=6.20.0",
+    "nbformat>=5.7.0",
+    "jupyterlab>=3.5.0",
+]
+
+# Experiment tracking and monitoring
+tracking = [
+    "mlflow>=2.1.0",
+    "wandb>=0.13.9",
+    "tensorboard>=2.11.0",
+    "aim>=3.17.0",
+    "neptune>=1.0.0",
+]
+
+# Advanced PyTorch features
+pytorch-extras = [
+    "torchmetrics>=0.11.0",
+    "pytorch-lightning>=1.9.0",
+    "torchinfo>=1.7.0",
+    "torch-tb-profiler>=0.4.0",
+    "torch-audio>=0.13.0",
+    "timm>=0.6.12",
+    "transformers>=4.26.0",
+]
+
+# Sparse tensor and optimization
+sparse = [
+    "torch-sparse>=0.6.16",
+    "torch-scatter>=2.1.0",
+    "torch-cluster>=1.6.0",
+    "torch-spline-conv>=1.2.1",
+    "torch-geometric>=2.2.0",
+]
+
+# 3D processing and visualization
+viz3d = [
+    "open3d>=0.16.0",
+    "trimesh>=3.17.0",
+    "meshio>=5.3.0",
+    "pyvista>=0.38.0",
+    "vtk>=9.2.0",
+    "mayavi>=4.8.0",
+    "pythreejs>=2.4.0",
+]
+
+# Enhanced visualization
+viz = [
+    "plotly>=5.11.0",
+    "dash>=2.8.0",
+    "streamlit>=1.17.0",
+    "bokeh>=3.0.0",
+    "seaborn>=0.12.0",
+    "altair>=4.2.0",
+    "holoviews>=1.15.0",
+]
+
+# Performance optimization
+performance = [
+    "numba>=0.56.4",
+    "cupy-cuda11x>=11.6.0; sys_platform != 'darwin'",
+    "cython>=0.29.33",
+    "joblib>=1.2.0",
+    "dask[complete]>=2023.1.0",
+    "ray[default]>=2.2.0",
+]
+
+# Distributed training
+distributed = [
+    "torch-distributed>=0.1.0",
+    "horovod>=0.28.0",
+    "deepspeed>=0.8.0",
+    "fairscale>=0.4.13",
+]
+
+# Model optimization and deployment
+deployment = [
+    "onnx>=1.13.0",
+    "onnxruntime>=1.13.0",
+    "tensorrt>=8.5.0; sys_platform == 'linux'",
+    "torch2trt>=0.4.0",
+    "torchserve>=0.7.0",
+    "bentoml>=1.0.0",
+]
+
+# Google Colab support
+colab = [
+    "google-colab>=1.0.0",
+    "colabcode>=0.3.0",
+    "pyngrok>=5.2.0",
+]
+
+# Cloud storage and data handling
+cloud = [
+    "boto3>=1.26.0",
+    "google-cloud-storage>=2.7.0",
+    "azure-storage-blob>=12.14.0",
+    "fsspec>=2023.1.0",
+    "s3fs>=2023.1.0",
+    "gcsfs>=2023.1.0",
+]
+
+# API and web services
+api = [
+    "fastapi>=0.89.0",
+    "uvicorn[standard]>=0.20.0",
+    "pydantic>=1.10.0",
+    "httpx>=0.23.0",
+    "websockets>=10.4",
+    "gradio>=3.16.0",
+]
+
+# All optional dependencies
+all = [
+    "deepsculpt-v2[dev,tracking,pytorch-extras,sparse,viz3d,viz,performance,distributed,deployment,colab,cloud,api]"
+]
+
+# Minimal installation for CI/testing
+minimal = [
+    "deepsculpt-v2[dev]"
+]
+
+[project.urls]
+Homepage = "https://github.com/deepsculpt/deepsculpt"
+Documentation = "https://deepsculpt-v2.readthedocs.io"
+Repository = "https://github.com/deepsculpt/deepsculpt"
+Issues = "https://github.com/deepsculpt/deepsculpt/issues"
+Changelog = "https://github.com/deepsculpt/deepsculpt/blob/main/CHANGELOG.md"
+"Bug Reports" = "https://github.com/deepsculpt/deepsculpt/issues"
+"Feature Requests" = "https://github.com/deepsculpt/deepsculpt/discussions"
+
+[project.scripts]
+deepsculpt = "deepsculpt.main:main"
+
+[tool.setuptools]
+packages = ["deepsculpt"]
+
+[tool.setuptools.package-data]
+"*" = ["*.yaml", "*.yml", "*.json", "*.txt", "*.md", "*.toml"]
+
+# UV package manager configuration
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.2.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.0.254",
+    "mypy>=1.0.0",
+]
+
+# Ruff configuration (modern linter)
+[tool.ruff]
+target-version = "py39"
+line-length = 88
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+    "ARG", # flake8-unused-arguments
+    "SIM", # flake8-simplify
+    "TCH", # flake8-type-checking
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+    "ARG002", # unused method argument
+    "ARG001", # unused function argument
+]
+unfixable = ["B"]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*" = ["ARG", "S101"]
+
+[tool.ruff.isort]
+known-first-party = ["core", "tests", "utils"]
+
+# Black configuration
+[tool.black]
+line-length = 88
+target-version = ['py39', 'py310', 'py311', 'py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+  | __pycache__
+)/
+'''
+
+# MyPy configuration
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = [
+    "torch.*",
+    "torchvision.*",
+    "plotly.*",
+    "mlflow.*",
+    "wandb.*",
+    "open3d.*",
+    "trimesh.*",
+    "numba.*",
+    "cupy.*",
+    "ray.*",
+]
+ignore_missing_imports = true
+
+# Pytest configuration
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=core",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+    "--cov-fail-under=80",
+]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "pytorch: marks tests that require PyTorch",
+    "gpu: marks tests that require GPU",
+    "cuda: marks tests that require CUDA",
+    "sparse: marks tests for sparse tensor functionality",
+    "diffusion: marks tests for diffusion models",
+    "gan: marks tests for GAN models",
+    "benchmark: marks performance benchmark tests",
+]
+
+# Coverage configuration
+[tool.coverage.run]
+source = ["core"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "setup.py",
+    "*/migrations/*",
+    "*/venv/*",
+    "*/.venv/*",
+    "*/benchmarks/*",
+]
+parallel = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+    "TYPE_CHECKING",
+]
+show_missing = true
+precision = 2
+
+[tool.coverage.html]
+directory = "htmlcov"

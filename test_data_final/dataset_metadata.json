@@ -1,0 +1,15 @@
+{
+  "num_samples": 3,
+  "void_dim": 32,
+  "num_shapes": 5,
+  "sparse": false,
+  "sparse_threshold": 1.0,
+  "device": "cpu",
+  "generation_time": 0.09236598014831543,
+  "timestamp": "2025-12-11T13:46:42.911310",
+  "dataset_paths": [
+    "data/2025-12-11/pytorch_samples/structures/structure_000000.pt",
+    "data/2025-12-11/pytorch_samples/structures/structure_000001.pt",
+    "data/2025-12-11/pytorch_samples/structures/structure_000002.pt"
+  ]
+}

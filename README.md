@@ -1,8 +1,12 @@
-# DeepSculpt 2.0 🎨🤖
+# 🎨 DeepSculpt - PyTorch 3D Generative Models
 
-**Advanced 3D Generative AI for Sculptural Art Creation**
+**Generate stunning 3D voxel sculptures using GANs and Diffusion models**
 
-DeepSculpt is a cutting-edge machine learning framework that generates complex 3D sculptural art using state-of-the-art generative models. The project has evolved from a TensorFlow-based prototype to a modern, modular PyTorch implementation with support for both GAN and Diffusion models.
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+DeepSculpt is a cutting-edge machine learning framework that generates complex 3D sculptural art using state-of-the-art generative models. Built with modern PyTorch, it supports both GAN and Diffusion models with GPU acceleration, sparse tensors, and comprehensive visualization tools.
 
 ## 🚀 What's New in v2.0
 
@@ -26,24 +30,50 @@ DeepSculpt v2.0 represents a complete architectural overhaul with significant pe
 - **Plugin architecture** for easy extension and customization
 - **Comprehensive testing** with unit, integration, and benchmark suites
 
+## 🚀 Quick Start
+
+```bash
+# Train a GAN model (1 epoch, small test)
+python deepsculpt/main.py train-gan --model-type=skip --epochs=1 --batch-size=2 --void-dim=32
+
+# Train a Diffusion model
+python deepsculpt/main.py train-diffusion --epochs=1 --batch-size=2 --void-dim=32
+
+# Generate samples from trained GAN
+python deepsculpt/main.py sample-gan --checkpoint=./results/gan_skip_*/generator_final.pt --num-samples=5
+
+# Generate samples from trained Diffusion model
+python deepsculpt/main.py sample-diffusion --checkpoint=./results/diffusion_*/diffusion_final.pt --num-samples=5
+```
+
 ## 🏗️ Architecture Overview
 
 ```
-DeepSculpt/
-├── deepsculpt_legacy/          # TensorFlow v1.x (preserved for compatibility)
-│   ├── deepSculpt/            # Original TensorFlow models and training
-│   ├── notebooks/             # Jupyter notebooks and experiments  
-│   └── tests/                 # Legacy test suite
-│
-└── deepsculpt_v2/             # Modern PyTorch v2.0 implementation
-    ├── core/
-    │   ├── models/            # GAN & Diffusion architectures
-    │   ├── training/          # Advanced training infrastructure
-    │   ├── data/              # 3D data generation & preprocessing
-    │   ├── visualization/     # Interactive 3D visualization
-    │   └── workflow/          # MLflow experiment tracking
-    ├── tests/                 # Comprehensive test coverage
-    └── main.py               # Unified CLI interface
+deepSculpt/
+├── deepsculpt/                  # Main package
+│   ├── core/                    # Core functionality
+│   │   ├── data/                # Data generation and processing
+│   │   │   ├── generation/      # Sculptor & Collector
+│   │   │   ├── transforms/      # Curator & preprocessing
+│   │   │   └── loaders/         # Data loading utilities
+│   │   ├── models/              # Model architectures
+│   │   │   ├── gan/             # GAN generators & discriminators
+│   │   │   └── diffusion/       # Diffusion models & schedulers
+│   │   ├── training/            # Training infrastructure
+│   │   ├── visualization/       # Plotting and visualization
+│   │   ├── workflow/            # Experiment management
+│   │   └── utils/               # Utilities and logging
+│   ├── main.py                  # CLI entry point
+│   ├── config.yaml              # Configuration file
+│   └── README.md                # Detailed API documentation
+├── notebooks/                   # Jupyter notebooks and examples
+├── tests/                       # Comprehensive test suite
+├── scripts/                     # Utility scripts
+├── examples/                    # Usage examples
+├── docs/                        # Documentation
+├── boilerplate/                 # Legacy code (archived)
+├── README.md                    # Main project README
+└── pyproject.toml               # Build configuration
 ```
 
 ## 🎨 Key Capabilities
@@ -74,7 +104,40 @@ DeepSculpt/
 
 ## 🚀 Quick Start
 
-### Installation
+## 📁 Output Directory Structure
+
+When you run training, outputs are organized as follows:
+
+```
+deepsculpt/
+├── results/                           # Training results
+│   ├── gan_skip_20231211_120000/      # GAN training run
+│   │   ├── checkpoints/               # Model checkpoints during training
+│   │   ├── snapshots/                 # Generated samples during training
+│   │   ├── samples/                   # Final generated samples
+│   │   ├── generator_final.pt         # Final generator weights
+│   │   ├── discriminator_final.pt     # Final discriminator weights
+│   │   └── config.json                # Training configuration
+│   │
+│   └── diffusion_20231211_130000/     # Diffusion training run
+│       ├── checkpoints/
+│       └── diffusion_final.pt         # Final diffusion model
+│
+├── data/                              # Generated training data
+│   ├── structures/                    # 3D structure tensors
+│   ├── colors/                        # Color/material tensors
+│   └── dataset_metadata.json
+│
+├── samples/                           # Generated samples output
+│   ├── sample_0000.pt                 # PyTorch tensor files
+│   ├── sample_0000.png                # Visualization images
+│   └── ...
+│
+└── logs/                              # Training logs
+    └── tensorboard/
+```
+
+## 🛠️ Installation
 
 ```bash
 # Clone the repository
@@ -84,45 +147,45 @@ cd deepsculpt
 # Install PyTorch (adjust for your CUDA version)
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
-# Install DeepSculpt v2.0
-cd deepsculpt_v2
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### Generate Your First 3D Sculpture
+## 🎨 Generate Your First 3D Sculpture
 
 ```bash
 # Generate a dataset of 3D sculptures
-python main.py generate-data --num-samples=100 --void-dim=64 --sparse
+python deepsculpt/main.py generate-data --num-samples=1000 --void-dim=64 --sparse
 
 # Train a GAN model
-python main.py train --framework=pytorch --model-type=skip --epochs=100 --mixed-precision
+python deepsculpt/main.py train-gan --model-type=skip --epochs=100 --mixed-precision
 
 # Train a diffusion model  
-python main.py train-diffusion --epochs=50 --timesteps=1000 --noise-schedule=cosine
+python deepsculpt/main.py train-diffusion --epochs=50 --timesteps=1000 --noise-schedule=cosine
 
 # Generate new sculptures
-python main.py sample-diffusion --checkpoint=./models/diffusion.pt --num-samples=10 --visualize
+python deepsculpt/main.py sample-diffusion --checkpoint=./results/diffusion_*/diffusion_final.pt --num-samples=10 --visualize
 ```
 
-### Python API Usage
+## 🐍 Python API Usage
 
 ```python
-from deepsculpt_v2.core.data.generation import PyTorchSculptor
-from deepsculpt_v2.core.models import PyTorchModelFactory
-from deepsculpt_v2.core.visualization import PyTorchVisualizer
+from deepsculpt.core.data.generation.pytorch_sculptor import PyTorchSculptor
+from deepsculpt.core.models.model_factory import PyTorchModelFactory
+from deepsculpt.core.visualization.pytorch_visualization import PyTorchVisualizer
 
 # Create a 3D sculptor
 sculptor = PyTorchSculptor(void_dim=64, device="cuda", sparse_mode=True)
-structure, colors = sculptor.generate_sculpture()
+sculpture = sculptor.create_sculpture(edges=2, planes=1, pipes=1)
 
-# Train a model
-generator = PyTorchModelFactory.create_gan_generator("skip", void_dim=64)
-discriminator = PyTorchModelFactory.create_gan_discriminator("skip", void_dim=64)
+# Create models
+factory = PyTorchModelFactory()
+generator = factory.create_gan_generator("skip", void_dim=64)
+discriminator = factory.create_gan_discriminator("simple", void_dim=64)
 
 # Visualize results
 visualizer = PyTorchVisualizer(backend="plotly")
-visualizer.plot_sculpture(structure, colors, interactive=True)
+visualizer.plot_sculpture(sculpture['structure'], interactive=True)
 ```
 
 ## 📊 Performance Benchmarks
@@ -135,9 +198,148 @@ visualizer.plot_sculpture(structure, colors, interactive=True)
 | Generation Time | 12s | 2.1s | 83% faster |
 | GPU Utilization | 45% | 92% | 104% improvement |
 
+## 🎛️ Key Features
+
+### **🎨 Data Generation Pipeline**
+- **PyTorchSculptor**: Creates individual 3D voxel sculptures with various geometric shapes
+- **PyTorchCollector**: Orchestrates batch generation for dataset creation with streaming support
+- **PyTorchCurator**: Preprocesses and transforms raw sculpture data with multiple encoding methods
+
+### **🤖 Advanced AI Models**
+- **GAN Models**: Skip-connection, complex, simple, monochrome, and autoencoder architectures
+- **Diffusion Models**: 3D U-Net with attention mechanisms and multiple noise schedules
+- **Sparse Tensors**: Memory-efficient operations for large voxel spaces
+- **Mixed Precision**: Automatic FP16/FP32 optimization for faster training
+
+### **📊 Training Infrastructure**
+- **Multiple Loss Types**: BCE, WGAN, LSGAN, Hinge loss support
+- **Distributed Training**: Multi-GPU and multi-node support
+- **Progressive Growing**: Multi-resolution training for detailed sculptures
+- **Experiment Tracking**: MLflow and Weights & Biases integration
+
+### **🖼️ Rich Visualization**
+- **Multiple Backends**: matplotlib, plotly, and Open3D support
+- **Interactive 3D**: Real-time manipulation and exploration
+- **Cross-sections**: 2D slices through 3D structures
+- **Point Clouds**: Interactive 3D point cloud visualization
+- **Animations**: Rotating views and time-lapse generation
+
+### **⚡ Performance Optimization**
+- **GPU Acceleration**: Automatic device management and tensor operations
+- **Memory Management**: Automatic batch size adjustment based on available memory
+- **Sparse Operations**: Efficient handling of sparse 3D data
+- **Real-time Monitoring**: Beautiful console output with Rich library
+
+## 🎯 Model Architectures
+
+### GAN Generator Types
+
+| Type | Description | Best For | Parameters |
+|------|-------------|----------|------------|
+| `simple` | Basic 3D transposed convolutions | Quick experiments | ~500K |
+| `complex` | Enhanced with batch norm and dropout | Better quality | ~1.2M |
+| `skip` | U-Net style skip connections | **Recommended** | ~1.3M |
+| `monochrome` | Optimized for single-channel output | Binary structures | ~400K |
+| `autoencoder` | Encoder-decoder architecture | Reconstruction | ~2M |
+
+### Diffusion Models
+
+| Type | Description | Parameters |
+|------|-------------|------------|
+| `unet3d` | 3D U-Net with attention | ~50M |
+| `conditional_unet3d` | Conditional generation | ~55M |
+
+## 📊 Hyperparameters Reference
+
+### GAN Training (`train-gan`)
+
+| Parameter | Default | Description | Options |
+|-----------|---------|-------------|---------|
+| `--model-type` | `skip` | Generator architecture | `simple`, `complex`, `skip`, `monochrome`, `autoencoder` |
+| `--epochs` | `100` | Number of training epochs | Any positive integer |
+| `--batch-size` | `32` | Training batch size | 1-128 (depends on GPU memory) |
+| `--void-dim` | `64` | 3D voxel space dimension | 16, 32, 64, 128 |
+| `--noise-dim` | `100` | Latent noise vector dimension | 50-200 |
+| `--learning-rate` | `0.0002` | Adam optimizer learning rate | 0.0001-0.001 |
+| `--mixed-precision` | `False` | Enable mixed precision training | Flag |
+| `--sparse` | `False` | Use sparse tensor operations | Flag |
+
+### Diffusion Training (`train-diffusion`)
+
+| Parameter | Default | Description | Options |
+|-----------|---------|-------------|---------|
+| `--epochs` | `100` | Number of training epochs | Any positive integer |
+| `--batch-size` | `16` | Training batch size | 1-64 (diffusion uses more memory) |
+| `--void-dim` | `64` | 3D voxel space dimension | 16, 32, 64 |
+| `--timesteps` | `1000` | Diffusion timesteps | 100-2000 |
+| `--noise-schedule` | `linear` | Noise scheduling strategy | `linear`, `cosine`, `sigmoid` |
+| `--mixed-precision` | `False` | Enable mixed precision training | Flag |
+
+## 🔄 Complete Workflow Examples
+
+### Train a High-Quality GAN
+```bash
+python deepsculpt/main.py train-gan \
+    --model-type=skip \
+    --epochs=200 \
+    --batch-size=32 \
+    --void-dim=64 \
+    --learning-rate=0.0002 \
+    --mixed-precision \
+    --scheduler \
+    --snapshot-freq=20
+```
+
+### Train a Diffusion Model
+```bash
+python deepsculpt/main.py train-diffusion \
+    --epochs=100 \
+    --batch-size=8 \
+    --void-dim=32 \
+    --timesteps=1000 \
+    --noise-schedule=cosine \
+    --mixed-precision
+```
+
+### Generate Training Data
+```bash
+python deepsculpt/main.py generate-data \
+    --num-samples=5000 \
+    --void-dim=64 \
+    --num-shapes=5 \
+    --output-dir=./data/training
+```
+
+## 🔧 Configuration Management
+
+### config.yaml
+```yaml
+model:
+  void_dim: 64
+  noise_dim: 100
+
+training:
+  batch_size: 32
+  learning_rate: 0.0002
+  epochs: 100
+
+data:
+  sparse_threshold: 0.1
+  num_workers: 4
+```
+
+## 🐛 Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| CUDA out of memory | Reduce `--batch-size` or `--void-dim` |
+| Training too slow | Enable `--mixed-precision`, use GPU |
+| Poor generation quality | Increase `--epochs`, try different `--model-type` |
+| NaN losses | Reduce `--learning-rate`, enable `--gradient-clip` |
+
 ## 🔬 Research Applications
 
-DeepSculpt v2.0 enables cutting-edge research in:
+DeepSculpt enables cutting-edge research in:
 
 - **Generative 3D Art**: Novel sculptural forms and artistic exploration
 - **Architectural Design**: Procedural building and structure generation  
@@ -145,62 +347,17 @@ DeepSculpt v2.0 enables cutting-edge research in:
 - **3D Printing**: Optimized models for additive manufacturing
 - **Scientific Visualization**: Complex data representation in 3D space
 
-## 🛠️ Development & Testing
+## 📚 Documentation
 
-```bash
-# Run comprehensive test suite
-python -m pytest deepsculpt_v2/tests/ -v
-
-# Performance benchmarks
-python -m pytest deepsculpt_v2/tests/benchmarks/ --benchmark-only
-
-# Code quality checks
-make lint format type-check
-
-# Generate documentation
-make docs
-```
-
-## 🤝 Contributing
-
-We welcome contributions! DeepSculpt v2.0 is designed for extensibility:
-
-1. **Add new model architectures** in `core/models/`
-2. **Implement custom shape generators** in `core/data/generation/`
-3. **Create visualization backends** in `core/visualization/`
-4. **Extend training strategies** in `core/training/`
-
-See our [Contributing Guide](CONTRIBUTING.md) for detailed instructions.
-
-## 📚 Documentation & Examples
-
-- **[API Documentation](docs/api/)**: Complete API reference
-- **[Tutorials](notebooks/)**: Step-by-step guides and examples
-- **[Model Zoo](models/)**: Pre-trained models and checkpoints
-- **[Gallery](gallery/)**: Showcase of generated sculptures
-
-## 🏆 Recognition
-
-DeepSculpt has been featured in:
-- SIGGRAPH 2024 Technical Papers
-- NeurIPS 2023 Workshop on Machine Learning for Creativity
-- IEEE Computer Graphics & Applications
+For detailed API documentation, examples, and tutorials, see:
+- **[Complete API Documentation](deepsculpt/README.md)**: Comprehensive reference
+- **[Notebooks](notebooks/)**: Step-by-step guides and examples
+- **[Examples](deepsculpt/examples/)**: Code samples and use cases
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-Built with modern tools and frameworks:
-- **PyTorch** for deep learning infrastructure
-- **MLflow** for experiment tracking  
-- **Rich** for beautiful terminal output
-- **Plotly** for interactive 3D visualization
-- **Open3D** for advanced 3D processing
+MIT License - See LICENSE file for details.
 
 ---
 
 **Ready to create the future of 3D generative art?** 🎨✨
-
-[Get Started](deepsculpt_v2/README.md) | [Documentation](docs/) | [Examples](notebooks/) | [Community](https://discord.gg/deepsculpt)

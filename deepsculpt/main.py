@@ -419,14 +419,16 @@ class DeepSculptV2Main:
         # Configure sculptor
         sculptor_config = {
             "void_dim": args.void_dim,
-            "num_shapes": args.num_shapes,
-            "sparse_threshold": args.sparse_threshold if args.sparse else 1.0
+            "edges": (2, 0.3, 0.5),    # 2 edges with size ratio between 0.3-0.5
+            "planes": (1, 0.3, 0.5),   # 1 plane
+            "pipes": (1, 0.3, 0.5),    # 1 pipe
         }
         
-        # Create collector
+        # Create collector (sparse_threshold passed separately to avoid duplication)
         collector = PyTorchCollector(
             sculptor_config=sculptor_config,
             output_format="pytorch",
+            sparse_mode=args.sparse,
             sparse_threshold=args.sparse_threshold if args.sparse else 1.0,
             device=self.device
         )

@@ -1,0 +1,6 @@
+2025-12-11 13:47:28,970 - GANTrainer - INFO - Starting training for 1 epochs
+2025-12-11 13:47:28,970 - GANTrainer - INFO - Epoch 1/1 - Training
+2025-12-11 13:47:30,321 - GANTrainer - INFO - Epoch 0, Batch 0: Gen Loss: 0.0000, Disc Loss: 8.6808
+2025-12-11 13:47:33,875 - GANTrainer - INFO - Epoch 1/1 completed in 4.90s - Train Loss: 0.0000, Val Loss: 0.0000
+2025-12-11 13:47:35,270 - GANTrainer - INFO - GAN checkpoint saved: ./checkpoints/checkpoint_epoch_1.pth
+2025-12-11 13:47:35,270 - GANTrainer - INFO - Training completed

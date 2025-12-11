@@ -1,0 +1,11 @@
+{
+  "num_samples": 3,
+  "void_dim": 32,
+  "num_shapes": 5,
+  "sparse": false,
+  "sparse_threshold": 1.0,
+  "device": "cpu",
+  "generation_time": 0.023369789123535156,
+  "timestamp": "2025-12-11T13:44:43.244117",
+  "dataset_paths": []
+}
