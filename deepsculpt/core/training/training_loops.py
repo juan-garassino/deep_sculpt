@@ -8,7 +8,16 @@ handling the core training logic and optimization steps.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.cuda.amp import autocast, GradScaler
+try:
+    # New PyTorch 2.9+ API
+    from torch.amp import autocast, GradScaler
+    def get_autocast(device='cuda'):
+        return autocast(device if device != 'cpu' else 'cpu')
+except ImportError:
+    # Fallback for older PyTorch versions
+    from torch.cuda.amp import autocast, GradScaler
+    def get_autocast(device='cuda'):
+        return autocast()
 from typing import Dict, Any, Optional, Tuple, List, Union
 import numpy as np
 
@@ -147,7 +156,7 @@ class GANTrainingLoop:
             disc_optimizer.zero_grad()
             
             if mixed_precision and disc_scaler:
-                with autocast():
+                with get_autocast():
                     disc_metrics = self._train_discriminator_step(real_data, noise)
                 
                 disc_scaler.scale(disc_metrics['disc_loss']).backward()
@@ -174,7 +183,7 @@ class GANTrainingLoop:
             gen_optimizer.zero_grad()
             
             if mixed_precision and gen_scaler:
-                with autocast():
+                with get_autocast():
                     gen_metrics = self._train_generator_step(noise)
                 
                 gen_scaler.scale(gen_metrics['gen_loss']).backward()
@@ -342,7 +351,7 @@ class DiffusionTrainingLoop:
         optimizer.zero_grad()
         
         if mixed_precision and scaler:
-            with autocast():
+            with get_autocast():
                 metrics = self._forward_pass(x_t, timesteps, x_0, noise, conditioning)
                 loss = metrics['diffusion_loss']
             

@@ -88,7 +88,14 @@ class GANTrainer(BaseTrainer):
         self.gradient_penalty_weight = gradient_penalty_weight
         
         # Additional scaler for discriminator if using mixed precision
-        self.disc_scaler = GradScaler() if config.mixed_precision else None
+        try:
+            # New PyTorch 2.9+ API
+            from torch.amp import GradScaler
+            self.disc_scaler = GradScaler('cuda') if config.mixed_precision and device != 'cpu' else None
+        except ImportError:
+            # Fallback for older PyTorch versions
+            from torch.cuda.amp import GradScaler
+            self.disc_scaler = GradScaler() if config.mixed_precision else None
         
         # GAN-specific metrics
         self.metrics.update({

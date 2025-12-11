@@ -57,7 +57,7 @@ hardware:
   
 # Experiment Tracking
 experiment:
-  name: "deepsculpt_v2_experiment"
+  name: "deepsculpt_experiment"
   tracking: "mlflow"  # mlflow, wandb, tensorboard
   log_interval: 10
   save_interval: 100

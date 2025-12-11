@@ -120,7 +120,14 @@ class BaseTrainer(ABC):
         self.device = device
         
         # Mixed precision training
-        self.scaler = GradScaler() if config.mixed_precision else None
+        try:
+            # New PyTorch 2.9+ API
+            from torch.amp import GradScaler
+            self.scaler = GradScaler('cuda') if config.mixed_precision and device != 'cpu' else None
+        except ImportError:
+            # Fallback for older PyTorch versions
+            from torch.cuda.amp import GradScaler
+            self.scaler = GradScaler() if config.mixed_precision else None
         
         # Metrics tracking
         self.metrics = {

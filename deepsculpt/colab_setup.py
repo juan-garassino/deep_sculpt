@@ -226,7 +226,7 @@ class ColabSetup:
                     "source": [
                         "# Install and setup DeepSculpt v2.0\n",
                         "!git clone https://github.com/deepsculpt/deepsculpt.git\n",
-                        "%cd deepsculpt/deepSculpt/deepsculpt_v2\n",
+                        "%cd deepsculpt\n",
                         "\n",
                         "# Run Colab setup\n",
                         "!python colab_setup.py\n",

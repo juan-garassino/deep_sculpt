@@ -243,6 +243,41 @@ class Visualizer:
             log_info(f"Converting colors tensor from {device} to numpy for visualization")
             colors = _tensor_to_numpy(colors)
         
+        # Handle tensor dimensions - ensure we have a 3D array
+        if structure.ndim == 4:
+            # Remove channel dimension if present [C, D, H, W] -> [D, H, W]
+            if structure.shape[0] == 1:
+                structure = structure.squeeze(0)
+                log_info(f"Squeezed channel dimension: {structure.shape}")
+            else:
+                # Take first channel if multiple channels
+                structure = structure[0]
+                log_info(f"Took first channel: {structure.shape}")
+        elif structure.ndim == 5:
+            # Remove batch and channel dimensions [B, C, D, H, W] -> [D, H, W]
+            structure = structure.squeeze()
+            if structure.ndim > 3:
+                structure = structure[0] if structure.ndim == 4 else structure[0, 0]
+            log_info(f"Squeezed batch/channel dimensions: {structure.shape}")
+        
+        # Handle colors similarly
+        if colors is not None:
+            if colors.ndim == 4:
+                if colors.shape[0] == 1:
+                    colors = colors.squeeze(0)
+                else:
+                    colors = colors[0]
+            elif colors.ndim == 5:
+                colors = colors.squeeze()
+                if colors.ndim > 3:
+                    colors = colors[0] if colors.ndim == 4 else colors[0, 0]
+        
+        # Ensure we have a 3D structure
+        if structure.ndim != 3:
+            raise ValueError(f"Structure must be 3-dimensional after processing, got shape {structure.shape}")
+        
+        log_info(f"Final structure shape for visualization: {structure.shape}")
+        
         begin_section(f"Plotting 3D sculpture with shape {structure.shape}")
 
         try:

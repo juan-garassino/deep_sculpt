@@ -111,7 +111,7 @@ try:
 except ImportError as e:
     print(f"Error importing DeepSculpt v2.0 modules: {e}")
     print("Make sure all required modules are available in the core directory")
-    print("Run from the deepsculpt_v2 directory")
+    print("Run from the deepsculpt directory")
     sys.exit(1)
 
 
@@ -768,7 +768,7 @@ class DeepSculptV2Main:
         """Setup MLflow experiment tracking."""
         import mlflow
         
-        experiment_name = f"deepsculpt_v2_{args.command}"
+        experiment_name = f"deepsculpt_{args.command}"
         mlflow.set_experiment(experiment_name)
         
         run_name = f"{args.model_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -802,7 +802,7 @@ class DeepSculptV2Main:
         }
         
         wandb.init(
-            project="deepsculpt_v2",
+            project="deepsculpt",
             config=config,
             name=f"{args.model_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )

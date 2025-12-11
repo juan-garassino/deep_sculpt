@@ -1,0 +1,28 @@
+# Minimal requirements for Google Colab
+# PyTorch is already installed in Colab, so we skip it
+
+# Core scientific computing (most already in Colab)
+numpy>=1.21.0
+scipy>=1.9.0
+scikit-learn>=1.1.0
+pandas>=1.5.0
+
+# Visualization (matplotlib already in Colab)
+plotly>=5.11.0
+Pillow>=9.0.0
+
+# Essential utilities
+tqdm>=4.64.0
+pyyaml>=6.0
+h5py>=3.7.0
+imageio>=2.22.0
+colorama>=0.4.4
+
+# Console output
+rich>=12.0.0
+
+# Optional (install only if needed)
+# zarr>=2.12.0
+# typer>=0.7.0
+# click>=8.0.0
+# mlflow>=2.1.0
