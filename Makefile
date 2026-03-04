@@ -326,3 +326,39 @@ show_sources_env:
 	-bq show ${DATASET}.val_${DATASET_SIZE}
 	-bq show ${DATASET}.train_processed_${DATASET_SIZE}
 	-bq show ${DATASET}.val_processed_${DATASET_SIZE}
+
+# ----------------------------------
+#      SERVICES
+# ----------------------------------
+
+mlflow_local:
+	@mlflow server --host 0.0.0.0 --port 8080 --backend-store-uri sqlite:///mlflow.db --default-artifact-root ./mlruns
+
+inference_local:
+	@uvicorn services.inference.app.main:app --host 0.0.0.0 --port 8080
+
+trainer_local:
+	@python -m services.trainer.train_entrypoint
+
+# ----------------------------------
+#      DOCKER COMPOSE (SERVICES)
+# ----------------------------------
+
+docker-build:
+	@docker compose build
+
+docker-up:
+	@docker compose up -d
+
+docker-down:
+	@docker compose down
+
+docker-logs:
+	@docker compose logs -f --tail=200
+
+docker-restart:
+	@docker compose down
+	@docker compose up -d
+
+docker-ps:
+	@docker compose ps

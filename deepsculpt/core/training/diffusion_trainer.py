@@ -199,6 +199,7 @@ class DiffusionTrainer(BaseTrainer):
         if isinstance(batch, dict):
             structure = batch.get('data', batch.get('structure', batch.get('x', None)))
             conditioning = batch.get(self.conditioning_key) if self.conditioning_key else None
+            class_labels = batch.get("class_labels")
             
             if structure is None:
                 raise ValueError("Could not find data in batch")
@@ -249,6 +250,8 @@ class DiffusionTrainer(BaseTrainer):
         
         if conditioning is not None:
             conditioning = conditioning.to(self.device)
+        if class_labels is not None:
+            class_labels = class_labels.to(self.device)
         
         batch_size = x_0.shape[0]
         
@@ -266,6 +269,9 @@ class DiffusionTrainer(BaseTrainer):
             dropout_mask = torch.rand(batch_size, device=self.device) < self.conditioning_dropout
             conditioning = conditioning.clone()
             conditioning[dropout_mask] = 0  # Zero out conditioning for dropped samples
+            if class_labels is not None:
+                class_labels = class_labels.clone()
+                class_labels[dropout_mask] = 0
         
         # Forward pass
         self.optimizer.zero_grad()
@@ -273,8 +279,12 @@ class DiffusionTrainer(BaseTrainer):
         if self.config.mixed_precision:
             with autocast():
                 # Get model prediction
-                if conditioning is not None:
+                if conditioning is not None and "class_labels" in self.model.forward.__code__.co_varnames:
+                    model_output = self.model(x_t, timesteps, conditioning, class_labels)
+                elif conditioning is not None:
                     model_output = self.model(x_t, timesteps, conditioning)
+                elif "class_labels" in self.model.forward.__code__.co_varnames and class_labels is not None:
+                    model_output = self.model(x_t, timesteps, None, class_labels)
                 else:
                     model_output = self.model(x_t, timesteps)
                 
@@ -303,8 +313,12 @@ class DiffusionTrainer(BaseTrainer):
             self.scaler.update()
         else:
             # Get model prediction
-            if conditioning is not None:
+            if conditioning is not None and "class_labels" in self.model.forward.__code__.co_varnames:
+                model_output = self.model(x_t, timesteps, conditioning, class_labels)
+            elif conditioning is not None:
                 model_output = self.model(x_t, timesteps, conditioning)
+            elif "class_labels" in self.model.forward.__code__.co_varnames and class_labels is not None:
+                model_output = self.model(x_t, timesteps, None, class_labels)
             else:
                 model_output = self.model(x_t, timesteps)
             

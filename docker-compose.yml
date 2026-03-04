@@ -1,0 +1,39 @@
+version: "3.9"
+
+services:
+  mlflow:
+    image: ${MLFLOW_IMAGE:-ghcr.io/mlflow/mlflow:v2.13.1}
+    environment:
+      PORT: 8080
+      BACKEND_STORE_URI: ${BACKEND_STORE_URI:-sqlite:///mlflow.db}
+      ARTIFACT_ROOT: ${ARTIFACT_ROOT:-./mlruns}
+    ports:
+      - "8080:8080"
+
+  trainer:
+    build:
+      context: .
+      dockerfile: services/trainer/Dockerfile
+    environment:
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:8080}
+      MODELS_BUCKET: ${MODELS_BUCKET:-local-bucket}
+      LATEST_MODEL_POINTER_PATH: ${LATEST_MODEL_POINTER_PATH:-gs://local-bucket/models/latest.json}
+      TRAIN_REQUEST_JSON: ${TRAIN_REQUEST_JSON:-}
+    depends_on:
+      - mlflow
+
+  inference:
+    build:
+      context: .
+      dockerfile: services/inference/Dockerfile
+    environment:
+      PROJECT_ID: ${PROJECT_ID:-local}
+      REGION: ${REGION:-local}
+      TRAIN_JOB_NAME: ${TRAIN_JOB_NAME:-trainer-job}
+      MODELS_BUCKET: ${MODELS_BUCKET:-local-bucket}
+      LATEST_MODEL_POINTER_PATH: ${LATEST_MODEL_POINTER_PATH:-gs://local-bucket/models/latest.json}
+      ALLOW_GCLOUD_FALLBACK: ${ALLOW_GCLOUD_FALLBACK:-false}
+    ports:
+      - "8081:8080"
+    depends_on:
+      - mlflow
