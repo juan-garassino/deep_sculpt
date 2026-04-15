@@ -1,4 +1,32 @@
 # ----------------------------------
+#      COLAB TRAINING
+# ----------------------------------
+
+DATA_OUT ?= ./colab_data
+RUN_OUT ?= ./colab_runs
+NUM_SAMPLES ?= 100
+EPOCHS ?= 10
+BATCH_SIZE ?= 4
+VOID_DIM ?= 32
+NOISE_DIM ?= 100
+NUM_INFERENCE_SAMPLES ?= 4
+NUM_WORKERS ?= 0
+
+.PHONY: colab-train-mono
+
+colab-train-mono:
+	python scripts/colab_train.py \
+		--data-output "$(DATA_OUT)" \
+		--run-output "$(RUN_OUT)" \
+		--num-samples "$(NUM_SAMPLES)" \
+		--epochs "$(EPOCHS)" \
+		--batch-size "$(BATCH_SIZE)" \
+		--void-dim "$(VOID_DIM)" \
+		--noise-dim "$(NOISE_DIM)" \
+		--num-inference-samples "$(NUM_INFERENCE_SAMPLES)" \
+		--num-workers "$(NUM_WORKERS)"
+
+# ----------------------------------
 #          INSTALL & TEST
 # ----------------------------------
 

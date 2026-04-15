@@ -49,7 +49,7 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import warnings
 
 # Suppress warnings for cleaner output
@@ -113,6 +113,34 @@ except ImportError as e:
     print("Make sure all required modules are available in the core directory")
     print("Run from the deepsculpt directory")
     sys.exit(1)
+
+
+class PairedTensorDataset(torch.utils.data.Dataset):
+    """Dataset backed by structure/color file pairs saved on disk."""
+
+    def __init__(self, sample_pairs: List[Tuple[Path, Path]]):
+        self.sample_pairs = sample_pairs
+
+    def __len__(self) -> int:
+        return len(self.sample_pairs)
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        structure_path, colors_path = self.sample_pairs[idx]
+
+        if structure_path.suffix == ".pt":
+            structure = torch.load(structure_path, map_location="cpu")
+            colors = torch.load(colors_path, map_location="cpu")
+        elif structure_path.suffix == ".npy":
+            structure = torch.from_numpy(np.load(structure_path))
+            colors = torch.from_numpy(np.load(colors_path))
+        else:
+            raise ValueError(f"Unsupported sample format: {structure_path.suffix}")
+
+        return {
+            "structure": structure,
+            "colors": colors,
+            "index": torch.tensor(idx),
+        }
 
 
 class DeepSculptV2Main:
@@ -428,6 +456,7 @@ class DeepSculptV2Main:
         collector = PyTorchCollector(
             sculptor_config=sculptor_config,
             output_format="pytorch",
+            base_dir=str(output_dir),
             sparse_mode=args.sparse,
             sparse_threshold=args.sparse_threshold if args.sparse else 1.0,
             device=self.device
@@ -451,15 +480,16 @@ class DeepSculptV2Main:
             "device": self.device,
             "generation_time": generation_time,
             "timestamp": datetime.now().isoformat(),
-            "dataset_paths": dataset_paths
+            "dataset_paths": dataset_paths,
+            "collection_dir": str(collector.date_dir),
         }
         
-        metadata_path = output_dir / "dataset_metadata.json"
+        metadata_path = collector.date_dir / "dataset_metadata.json"
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
         
         print(f"Dataset generated successfully in {generation_time:.2f}s!")
-        print(f"Output directory: {output_dir}")
+        print(f"Collection directory: {collector.date_dir}")
         print(f"Metadata saved to: {metadata_path}")
         
         return 0
@@ -741,28 +771,94 @@ class DeepSculptV2Main:
     
     def _create_data_loader(self, args):
         """Create data loader based on arguments."""
-        # Generate data on the fly using PyTorchCollector
+        collection_dir = self._resolve_collection_dir(Path(args.data_folder))
+        if collection_dir is not None:
+            sample_pairs = self._load_sample_pairs(collection_dir)
+            print(f"Loading {len(sample_pairs)} samples from {collection_dir}")
+            dataset = PairedTensorDataset(sample_pairs)
+            return torch.utils.data.DataLoader(
+                dataset,
+                batch_size=args.batch_size,
+                shuffle=True,
+                num_workers=getattr(args, "num_workers", 0),
+            )
+
+        print(
+            f"Warning: no saved dataset found in {args.data_folder}. "
+            "Falling back to a small generated streaming dataset."
+        )
+
         sculptor_config = {
             "void_dim": args.void_dim,
-            "edges": (2, 0.3, 0.5),  # 2 edges with size ratio between 0.3-0.5
-            "planes": (1, 0.3, 0.5),  # 1 plane
-            "pipes": (1, 0.3, 0.5)    # 1 pipe
+            "edges": (2, 0.3, 0.5),
+            "planes": (1, 0.3, 0.5),
+            "pipes": (1, 0.3, 0.5),
         }
-        
+
         collector = PyTorchCollector(
             sculptor_config=sculptor_config,
             device=self.device
         )
-        
-        # Create a small dataset for testing (10 samples)
         dataset = collector.create_streaming_dataset(10)
-        
+
         return torch.utils.data.DataLoader(
             dataset,
             batch_size=args.batch_size,
             shuffle=True,
-            num_workers=0  # Use 0 for CPU to avoid multiprocessing issues
+            num_workers=0
         )
+
+    def _resolve_collection_dir(self, data_folder: Path) -> Optional[Path]:
+        """Resolve a data folder to a single collection directory."""
+        if not data_folder.exists():
+            return None
+
+        direct_collection = data_folder / "pytorch_samples" / "structures"
+        if direct_collection.exists():
+            return data_folder
+
+        dated_collections = sorted(
+            path for path in data_folder.iterdir()
+            if path.is_dir() and (path / "pytorch_samples" / "structures").exists()
+        )
+        if dated_collections:
+            return dated_collections[-1]
+
+        recursive_matches = sorted(
+            {
+                path.parent.parent.parent
+                for path in data_folder.rglob("structure_*.pt")
+            }
+            | {
+                path.parent.parent.parent
+                for path in data_folder.rglob("structure_*.npy")
+            }
+        )
+        if recursive_matches:
+            return recursive_matches[-1]
+
+        return None
+
+    def _load_sample_pairs(self, collection_dir: Path) -> List[Tuple[Path, Path]]:
+        """Load paired structure/color sample paths from a collection directory."""
+        structures_dir = collection_dir / "pytorch_samples" / "structures"
+        colors_dir = collection_dir / "pytorch_samples" / "colors"
+
+        structure_files = sorted(structures_dir.glob("structure_*.pt"))
+        if not structure_files:
+            structure_files = sorted(structures_dir.glob("structure_*.npy"))
+
+        sample_pairs = []
+        for structure_path in structure_files:
+            colors_name = structure_path.name.replace("structure_", "colors_", 1)
+            colors_path = colors_dir / colors_name
+            if colors_path.exists():
+                sample_pairs.append((structure_path, colors_path))
+
+        if not sample_pairs:
+            raise ValueError(f"No paired samples found under {collection_dir}")
+
+        return sample_pairs
     
     def _setup_mlflow_tracking(self, args, results_dir):
         """Setup MLflow experiment tracking."""
