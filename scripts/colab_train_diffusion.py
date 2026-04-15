@@ -35,7 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--noise-schedule", default="cosine", choices=["linear", "cosine", "sigmoid"], help="Noise schedule")
     parser.add_argument("--beta-start", type=float, default=0.0001, help="Noise schedule beta start")
     parser.add_argument("--beta-end", type=float, default=0.02, help="Noise schedule beta end")
-    parser.add_argument("--num-inference-samples", type=int, default=4, help="Number of samples to infer after training")
+    parser.add_argument("--num-inference-samples", type=int, default=1, help="Number of samples to infer after training")
     parser.add_argument("--num-inference-steps", type=int, default=50, help="Number of denoising steps for sample generation")
     parser.add_argument("--sampler", default="ddim", choices=["ddpm", "ddim", "dpm_solver"], help="Diffusion inference sampler")
     parser.add_argument("--guidance-scale", type=float, default=1.0, help="Classifier-free guidance scale for sampling")

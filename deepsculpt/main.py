@@ -1031,7 +1031,8 @@ class DeepSculptV2Main:
         samples_dir.mkdir(exist_ok=True)
         
         with torch.no_grad():
-            noise = torch.randn(4, args.noise_dim, device=self.device)
+            num_preview_samples = max(1, int(getattr(args, "num_preview_samples", 1)))
+            noise = torch.randn(num_preview_samples, args.noise_dim, device=self.device)
             samples = generator(noise)
             
             for i, sample in enumerate(samples):
@@ -1095,6 +1096,7 @@ def create_parser():
     train_gan_parser.add_argument('--mlflow', action='store_true', help='Enable MLflow tracking')
     train_gan_parser.add_argument('--wandb', action='store_true', help='Enable Weights & Biases tracking')
     train_gan_parser.add_argument('--generate-samples', action='store_true', help='Generate sample visualizations')
+    train_gan_parser.add_argument('--num-preview-samples', type=int, default=1, help='Number of training-end preview samples to render')
     train_gan_parser.add_argument('--num-workers', type=int, default=4, help='Number of data loader workers')
     train_gan_parser.set_defaults(use_ema=True, sample_from_ema=True)
     

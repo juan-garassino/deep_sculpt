@@ -78,7 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--void-dim", type=int, default=32, help="Voxel dimension")
     parser.add_argument("--noise-dim", type=int, default=100, help="GAN noise dimension")
     parser.add_argument("--learning-rate", type=float, default=0.0002, help="GAN learning rate")
-    parser.add_argument("--num-inference-samples", type=int, default=4, help="Number of samples to infer after training")
+    parser.add_argument("--num-inference-samples", type=int, default=1, help="Number of samples to infer after training")
     parser.add_argument("--num-workers", type=int, default=0, help="Training dataloader workers")
     parser.add_argument("--discriminator-type", default="spectral_norm", help="GAN discriminator type")
     parser.add_argument("--r1-gamma", type=float, default=2.0, help="R1 regularization gamma")
@@ -160,6 +160,7 @@ def main() -> int:
         "--use-ema",
         "--sample-from-ema",
         "--generate-samples",
+        "--num-preview-samples=1",
     ]
     if args.mixed_precision and not args.cpu:
         train_cmd.append("--mixed-precision")
