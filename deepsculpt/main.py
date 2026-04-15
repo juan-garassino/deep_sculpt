@@ -454,10 +454,12 @@ class DeepSculptV2Main:
             'noise_scheduler': noise_scheduler,
             'config': {
                 'void_dim': args.void_dim,
+                'num_channels': num_channels,
                 'timesteps': args.timesteps,
                 'noise_schedule': args.noise_schedule,
                 'sparse': args.sparse,
                 'use_ema': args.use_ema,
+                'color': color_mode,
             }
         }, results_dir / "diffusion_final.pt")
         
@@ -604,6 +606,8 @@ class DeepSculptV2Main:
         model = model_factory.create_diffusion_model(
             model_type="unet3d",
             void_dim=config['void_dim'],
+            in_channels=config.get('num_channels', 1),
+            out_channels=config.get('num_channels', 1),
             timesteps=config.get('timesteps', 1000),
             sparse=config.get('sparse', False)
         ).to(self.device)
@@ -611,14 +615,31 @@ class DeepSculptV2Main:
         model.load_state_dict(checkpoint['model_state_dict'])
         model.eval()
         
-        # Create diffusion pipeline
-        from core.models.diffusion.pipeline import Diffusion3DPipeline
+        # Keep the scheduler tensors on the active device after checkpoint load.
         noise_scheduler = checkpoint['noise_scheduler']
-        diffusion_pipeline = Diffusion3DPipeline(
-            model=model,
-            noise_scheduler=noise_scheduler,
-            timesteps=config.get('timesteps', 1000)
-        )
+        if hasattr(noise_scheduler, "device"):
+            noise_scheduler.device = self.device
+        if hasattr(noise_scheduler, "_to_device"):
+            noise_scheduler._to_device()
+
+        from core.models.diffusion.pipeline import Diffusion3DPipeline, FastSamplingPipeline
+        if args.sampler == "ddpm":
+            diffusion_pipeline = Diffusion3DPipeline(
+                model=model,
+                noise_scheduler=noise_scheduler,
+                device=self.device,
+                guidance_scale=args.guidance_scale,
+                num_inference_steps=args.num_steps,
+            )
+        else:
+            diffusion_pipeline = FastSamplingPipeline(
+                model=model,
+                noise_scheduler=noise_scheduler,
+                device=self.device,
+                guidance_scale=args.guidance_scale,
+                num_inference_steps=args.num_steps,
+                scheduler_type=args.sampler,
+            )
         
         # Create output directory
         output_dir = Path(args.output_dir)
@@ -633,12 +654,12 @@ class DeepSculptV2Main:
                 print(f"Generating sample {i+1}/{args.num_samples}")
                 
                 # Sample from diffusion model
-                shape = (1, 1 if not config.get('sparse', False) else 2,
+                shape = (1, config.get('num_channels', 1),
                         config['void_dim'], config['void_dim'], config['void_dim'])
                 sample = diffusion_pipeline.sample(
                     shape=shape,
-                    num_steps=args.num_steps,
-                    device=self.device
+                    num_inference_steps=args.num_steps,
+                    guidance_scale=args.guidance_scale,
                 )
                 
                 samples.append(sample.cpu())
@@ -1021,6 +1042,7 @@ def create_parser():
     train_diff_parser.add_argument('--beta-end', type=float, default=0.02, help='Beta end value')
     train_diff_parser.add_argument('--data-folder', default='./data', help='Training data folder')
     train_diff_parser.add_argument('--output-dir', default='./results', help='Output directory')
+    train_diff_parser.add_argument('--color', action='store_true', help='Enable color-mode diffusion channels')
     train_diff_parser.add_argument('--sparse', action='store_true', help='Use sparse tensors')
     train_diff_parser.add_argument('--mixed-precision', action='store_true', help='Use mixed precision training')
     train_diff_parser.add_argument('--scheduler', action='store_true', help='Use learning rate scheduler')
@@ -1052,6 +1074,10 @@ def create_parser():
     sample_diff_parser.add_argument('--checkpoint', required=True, help='Path to model checkpoint')
     sample_diff_parser.add_argument('--num-samples', type=int, default=10, help='Number of samples to generate')
     sample_diff_parser.add_argument('--num-steps', type=int, default=50, help='Number of denoising steps')
+    sample_diff_parser.add_argument('--sampler', default='ddim', choices=['ddpm', 'ddim', 'dpm_solver'],
+                                   help='Inference sampler. DDIM is the default fast sampler, inspired by Stable Diffusion CLI usage.')
+    sample_diff_parser.add_argument('--guidance-scale', type=float, default=1.0,
+                                   help='Classifier-free guidance scale. Keep at 1.0 for unconditional models.')
     sample_diff_parser.add_argument('--output-dir', default='./samples', help='Output directory')
     sample_diff_parser.add_argument('--visualize', action='store_true', help='Create visualizations')
     

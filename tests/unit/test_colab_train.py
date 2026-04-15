@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from scripts.colab_train import build_env, find_generator_checkpoint
+from scripts.colab_train import build_env, find_generator_checkpoint, find_latest_dataset
 
 
 def test_build_env_includes_repo_and_package_paths(tmp_path):
@@ -29,3 +29,16 @@ def test_find_generator_checkpoint_prefers_ema(tmp_path):
     checkpoint = find_generator_checkpoint(run_dir)
 
     assert checkpoint == ema_ckpt
+
+
+def test_find_latest_dataset_uses_generated_metadata(tmp_path):
+    older = tmp_path / "2026-04-14"
+    newer = tmp_path / "2026-04-15"
+    older.mkdir()
+    newer.mkdir()
+    (older / "dataset_metadata.json").write_text("{}")
+    (newer / "dataset_metadata.json").write_text("{}")
+
+    dataset = find_latest_dataset(tmp_path)
+
+    assert dataset == newer

@@ -4,6 +4,7 @@
 
 DATA_OUT ?= ./colab_data
 RUN_OUT ?= ./colab_runs
+DATA_MODE ?= reuse
 NUM_SAMPLES ?= 100
 EPOCHS ?= 10
 BATCH_SIZE ?= 4
@@ -17,6 +18,8 @@ BETA_START ?= 0.0001
 BETA_END ?= 0.02
 NUM_INFERENCE_SAMPLES ?= 4
 NUM_INFERENCE_STEPS ?= 50
+DIFFUSION_SAMPLER ?= ddim
+GUIDANCE_SCALE ?= 1.0
 NUM_WORKERS ?= 0
 DISCRIMINATOR_TYPE ?= spectral_norm
 R1_GAMMA ?= 10.0
@@ -32,6 +35,7 @@ colab-train-mono:
 	python scripts/colab_train.py \
 		--data-output "$(DATA_OUT)" \
 		--run-output "$(RUN_OUT)" \
+		--data-mode "$(DATA_MODE)" \
 		--num-samples "$(NUM_SAMPLES)" \
 		--epochs "$(EPOCHS)" \
 		--batch-size "$(BATCH_SIZE)" \
@@ -51,6 +55,7 @@ colab-train-diffusion:
 	python scripts/colab_train_diffusion.py \
 		--data-output "$(DATA_OUT)" \
 		--run-output "$(RUN_OUT)" \
+		--data-mode "$(DATA_MODE)" \
 		--num-samples "$(NUM_SAMPLES)" \
 		--epochs "$(EPOCHS)" \
 		--batch-size "$(BATCH_SIZE)" \
@@ -63,6 +68,8 @@ colab-train-diffusion:
 		--beta-end "$(BETA_END)" \
 		--num-inference-samples "$(NUM_INFERENCE_SAMPLES)" \
 		--num-inference-steps "$(NUM_INFERENCE_STEPS)" \
+		--sampler "$(DIFFUSION_SAMPLER)" \
+		--guidance-scale "$(GUIDANCE_SCALE)" \
 		--num-workers "$(NUM_WORKERS)" \
 		--ema-decay "$(EMA_DECAY)"
 

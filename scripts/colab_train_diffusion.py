@@ -5,7 +5,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from colab_train import build_env, run_command
+from colab_train import build_env, find_latest_dataset, run_command
 
 
 def find_latest_run(run_output: Path) -> Path:
@@ -24,6 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--data-output", required=True, help="Base directory for generated training data")
     parser.add_argument("--run-output", required=True, help="Base directory for models and inference outputs")
+    parser.add_argument("--data-mode", default="reuse", choices=["reuse", "regenerate"], help="Reuse the latest existing dataset or generate a new dated dataset version")
     parser.add_argument("--num-samples", type=int, default=100, help="Number of generated training samples")
     parser.add_argument("--epochs", type=int, default=10, help="Training epochs")
     parser.add_argument("--batch-size", type=int, default=4, help="Training batch size")
@@ -36,6 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--beta-end", type=float, default=0.02, help="Noise schedule beta end")
     parser.add_argument("--num-inference-samples", type=int, default=4, help="Number of samples to infer after training")
     parser.add_argument("--num-inference-steps", type=int, default=50, help="Number of denoising steps for sample generation")
+    parser.add_argument("--sampler", default="ddim", choices=["ddpm", "ddim", "dpm_solver"], help="Diffusion inference sampler")
+    parser.add_argument("--guidance-scale", type=float, default=1.0, help="Classifier-free guidance scale for sampling")
     parser.add_argument("--num-workers", type=int, default=0, help="Training dataloader workers")
     parser.add_argument("--ema-decay", type=float, default=0.9999, help="EMA decay")
     parser.add_argument("--mixed-precision", action="store_true", help="Enable mixed precision for diffusion training")
@@ -63,19 +66,27 @@ def main() -> int:
 
     base_cmd = [sys.executable, "-m", "deepsculpt.main", *global_flags]
 
-    generate_cmd = [
-        *base_cmd,
-        "generate-data",
-        f"--num-samples={args.num_samples}",
-        f"--void-dim={args.void_dim}",
-        f"--output-dir={data_output}",
-    ]
-    run_command(generate_cmd, repo_root, env)
+    dataset_path = find_latest_dataset(data_output) if args.data_mode == "reuse" else None
+    if dataset_path is None:
+        generate_cmd = [
+            *base_cmd,
+            "generate-data",
+            f"--num-samples={args.num_samples}",
+            f"--void-dim={args.void_dim}",
+            f"--output-dir={data_output}",
+        ]
+        run_command(generate_cmd, repo_root, env)
+        dataset_path = find_latest_dataset(data_output)
+    else:
+        print(f"Reusing existing dataset at {dataset_path}")
+
+    if dataset_path is None:
+        raise FileNotFoundError(f"No generated dataset found under {data_output}")
 
     train_cmd = [
         *base_cmd,
         "train-diffusion",
-        f"--data-folder={data_output}",
+        f"--data-folder={dataset_path}",
         f"--output-dir={run_output}",
         f"--epochs={args.epochs}",
         f"--batch-size={args.batch_size}",
@@ -104,12 +115,14 @@ def main() -> int:
         f"--checkpoint={checkpoint}",
         f"--num-samples={args.num_inference_samples}",
         f"--num-steps={args.num_inference_steps}",
+        f"--sampler={args.sampler}",
+        f"--guidance-scale={args.guidance_scale}",
         f"--output-dir={inference_output}",
         "--visualize",
     ]
     run_command(sample_cmd, repo_root, env)
 
-    print(f"Training data saved under: {data_output}")
+    print(f"Training data used from: {dataset_path}")
     print(f"Run artifacts saved under: {latest_run}")
     print(f"Inference samples saved under: {inference_output}")
     return 0
