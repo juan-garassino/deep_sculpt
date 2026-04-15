@@ -199,14 +199,18 @@ class StreamingDataset(Dataset):
             return {"structure": structure, "colors": colors, "index": torch.tensor(idx)}
         
         # Generate new sample
+        sculptor_kwargs = dict(self.sculptor_config)
+        structure_mode = sculptor_kwargs.pop("structure_mode", "generic")
         sculptor = PyTorchSculptor(
             device=self.device,
             sparse_mode=self.sparse_mode,
             verbose=False,
-            **self.sculptor_config
+            **sculptor_kwargs
         )
-        
-        structure, colors = sculptor.generate_sculpture()
+        if structure_mode == "architectural":
+            structure, colors = sculptor.generate_architectural_sculpture()
+        else:
+            structure, colors = sculptor.generate_sculpture()
         
         # Add to cache if there's space
         if len(self._cache) < self.cache_size:
@@ -518,17 +522,20 @@ class PyTorchCollector:
             
             try:
                 # Create sculptor
+                sculptor_kwargs = dict(self.sculptor_config)
+                structure_mode = sculptor_kwargs.pop("structure_mode", "generic")
                 sculptor = PyTorchSculptor(
                     device=self.device,
                     sparse_mode=self.sparse_mode,
                     sparse_threshold=self.sparse_threshold,
                     memory_limit_gb=self.memory_monitor.memory_limit_gb,
                     verbose=False,
-                    **self.sculptor_config
+                    **sculptor_kwargs
                 )
-                
-                # Generate sculpture
-                structure, colors = sculptor.generate_sculpture()
+                if structure_mode == "architectural":
+                    structure, colors = sculptor.generate_architectural_sculpture()
+                else:
+                    structure, colors = sculptor.generate_sculpture()
                 
                 # Save sample
                 sample_path = self._save_sample(sample_idx, structure, colors)

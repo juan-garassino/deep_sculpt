@@ -270,12 +270,18 @@ def return_axis_pytorch(
     structure: torch.Tensor,
     colors: torch.Tensor,
     device: str = "cpu",
+    orientation: str = "random",
 ) -> Tuple[torch.Tensor, torch.Tensor, int]:
     """
     Selects a random plane from a 3D tensor along a random axis.
     """
-    section = random.randint(0, structure.shape[0] - 1)
-    axis_selection = random.randint(0, 2)
+    orientation_to_axis = {
+        "yz": 0,
+        "xz": 1,
+        "xy": 2,
+    }
+    axis_selection = orientation_to_axis.get(orientation, random.randint(0, 2))
+    section = random.randint(0, structure.shape[axis_selection] - 1)
 
     log_info(f"Selected axis {axis_selection}, section {section}", is_last=False)
 
@@ -321,7 +327,12 @@ def attach_plane_pytorch(
         colors = colors.to(device)
         original_sparse_mode = sparse_mode
 
-        working_plane, color_parameters, section = return_axis_pytorch(structure, colors, device)
+        working_plane, color_parameters, section = return_axis_pytorch(
+            structure,
+            colors,
+            device,
+            orientation=orientation,
+        )
         log_info(f"Working on plane with shape {working_plane.shape}")
 
         plane_width = PyTorchUtils.generate_random_size(
@@ -513,6 +524,7 @@ def attach_pipe_pytorch(
     sparse_mode: bool = False,
     wall_thickness: int = 1,
     pipe_complexity: str = "simple",  # "simple", "complex", "curved"
+    axis_selection: Optional[int] = None,
     verbose: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
@@ -551,7 +563,10 @@ def attach_pipe_pytorch(
 
         log_info(f"Pipe position: x={x_pos}, y={y_pos}, z={z_pos}")
 
-        axis_selection = random.randint(0, 1)
+        if axis_selection is None:
+            axis_selection = random.randint(0, 1)
+        elif axis_selection not in (0, 1):
+            raise ValueError("axis_selection must be 0, 1, or None")
         shape_selection = random.randint(0, 1)
 
         log_info(f"Design parameters: axis_selection={axis_selection}, shape_selection={shape_selection}")

@@ -69,3 +69,6 @@ def test_build_parser_uses_sparse_3d_safe_defaults():
     assert args.occupancy_loss_weight == 5.0
     assert args.occupancy_floor == 0.01
     assert args.occupancy_target_mode == "batch_real"
+    assert args.structure_preset == "architectural"
+    assert args.grid_count == 1
+    assert args.grid_step == 4

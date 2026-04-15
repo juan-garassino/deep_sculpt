@@ -501,12 +501,7 @@ class DeepSculptV2Main:
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Configure sculptor
-        sculptor_config = {
-            "void_dim": args.void_dim,
-            "edges": (2, 0.3, 0.5),    # 2 edges with size ratio between 0.3-0.5
-            "planes": (1, 0.3, 0.5),   # 1 plane
-            "pipes": (1, 0.3, 0.5),    # 1 pipe
-        }
+        sculptor_config = self._build_sculptor_config(args)
         
         # Create collector (sparse_threshold passed separately to avoid duplication)
         collector = PyTorchCollector(
@@ -539,6 +534,8 @@ class DeepSculptV2Main:
             "dataset_paths": dataset_paths,
             "collection_dir": str(collector.date_dir),
             "occupancy_stats": self._summarize_occupancy_stats(collector.get_generation_stats().get("occupancy_values", [])),
+            "structure_preset": getattr(args, "structure_preset", "architectural"),
+            "sculptor_config": sculptor_config,
         }
         
         metadata_path = collector.date_dir / "dataset_metadata.json"
@@ -864,12 +861,7 @@ class DeepSculptV2Main:
             "Falling back to a small generated streaming dataset."
         )
 
-        sculptor_config = {
-            "void_dim": args.void_dim,
-            "edges": (2, 0.3, 0.5),
-            "planes": (1, 0.3, 0.5),
-            "pipes": (1, 0.3, 0.5),
-        }
+        sculptor_config = self._build_sculptor_config(args)
 
         collector = PyTorchCollector(
             sculptor_config=sculptor_config,
@@ -908,6 +900,29 @@ class DeepSculptV2Main:
             "max": float(np.max(occupancy_array)),
             "p10": float(np.percentile(occupancy_array, 10)),
             "p90": float(np.percentile(occupancy_array, 90)),
+        }
+
+    def _build_sculptor_config(self, args) -> Dict[str, Any]:
+        """Build the procedural data-generation config from CLI arguments."""
+        structure_preset = getattr(args, "structure_preset", "architectural")
+
+        if structure_preset == "architectural":
+            return {
+                "void_dim": args.void_dim,
+                "edges": (getattr(args, "edge_count", 0), getattr(args, "edge_min_ratio", 0.2), getattr(args, "edge_max_ratio", 0.4)),
+                "planes": (3, getattr(args, "plane_min_ratio", 0.3), getattr(args, "plane_max_ratio", 0.5)),
+                "pipes": (2, getattr(args, "pipe_min_ratio", 0.3), getattr(args, "pipe_max_ratio", 0.5)),
+                "grid": (getattr(args, "grid_count", 1), getattr(args, "grid_step", 4)),
+                "structure_mode": "architectural",
+            }
+
+        return {
+            "void_dim": args.void_dim,
+            "edges": (getattr(args, "edge_count", 2), getattr(args, "edge_min_ratio", 0.3), getattr(args, "edge_max_ratio", 0.5)),
+            "planes": (getattr(args, "plane_count", 1), getattr(args, "plane_min_ratio", 0.3), getattr(args, "plane_max_ratio", 0.5)),
+            "pipes": (getattr(args, "pipe_count", 1), getattr(args, "pipe_min_ratio", 0.3), getattr(args, "pipe_max_ratio", 0.5)),
+            "grid": (getattr(args, "grid_count", 1), getattr(args, "grid_step", 4)),
+            "structure_mode": "generic",
         }
 
     def _resolve_collection_dir(self, data_folder: Path) -> Optional[Path]:
@@ -1114,6 +1129,18 @@ def create_parser():
     gen_parser.add_argument('--num-samples', type=int, default=1000, help='Number of samples to generate')
     gen_parser.add_argument('--void-dim', type=int, default=64, help='3D voxel space dimension')
     gen_parser.add_argument('--num-shapes', type=int, default=5, help='Number of shapes per sculpture')
+    gen_parser.add_argument('--structure-preset', default='architectural', choices=['architectural', 'generic'], help='Procedural structure recipe preset')
+    gen_parser.add_argument('--grid-count', type=int, default=1, help='Enable grid columns when > 0')
+    gen_parser.add_argument('--grid-step', type=int, default=4, help='Grid spacing between columns')
+    gen_parser.add_argument('--edge-count', type=int, default=0, help='Number of edge primitives for the selected preset')
+    gen_parser.add_argument('--edge-min-ratio', type=float, default=0.2, help='Minimum edge size ratio')
+    gen_parser.add_argument('--edge-max-ratio', type=float, default=0.4, help='Maximum edge size ratio')
+    gen_parser.add_argument('--plane-count', type=int, default=1, help='Plane count for generic preset')
+    gen_parser.add_argument('--plane-min-ratio', type=float, default=0.3, help='Minimum plane size ratio')
+    gen_parser.add_argument('--plane-max-ratio', type=float, default=0.5, help='Maximum plane size ratio')
+    gen_parser.add_argument('--pipe-count', type=int, default=1, help='Pipe count for generic preset')
+    gen_parser.add_argument('--pipe-min-ratio', type=float, default=0.3, help='Minimum pipe size ratio')
+    gen_parser.add_argument('--pipe-max-ratio', type=float, default=0.5, help='Maximum pipe size ratio')
     gen_parser.add_argument('--output-dir', default='./data', help='Output directory')
     gen_parser.add_argument('--sparse', action='store_true', help='Use sparse tensors')
     gen_parser.add_argument('--sparse-threshold', type=float, default=0.1, help='Sparse tensor threshold')

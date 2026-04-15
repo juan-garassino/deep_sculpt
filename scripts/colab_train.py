@@ -69,6 +69,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-output", required=True, help="Base directory for generated training data")
     parser.add_argument("--run-output", required=True, help="Base directory for models and inference outputs")
     parser.add_argument("--data-mode", default="reuse", choices=["reuse", "regenerate"], help="Reuse the latest existing dataset or generate a new dated dataset version")
+    parser.add_argument("--structure-preset", default="architectural", choices=["architectural", "generic"], help="Procedural structure preset for generated data")
+    parser.add_argument("--grid-count", type=int, default=1, help="Grid enable/count flag")
+    parser.add_argument("--grid-step", type=int, default=4, help="Grid column spacing")
     parser.add_argument("--num-samples", type=int, default=100, help="Number of generated training samples")
     parser.add_argument("--epochs", type=int, default=10, help="Training epochs")
     parser.add_argument("--batch-size", type=int, default=4, help="Training batch size")
@@ -119,6 +122,9 @@ def main() -> int:
             "generate-data",
             f"--num-samples={args.num_samples}",
             f"--void-dim={args.void_dim}",
+            f"--structure-preset={args.structure_preset}",
+            f"--grid-count={args.grid_count}",
+            f"--grid-step={args.grid_step}",
             f"--output-dir={data_output}",
         ]
         run_command(generate_cmd, repo_root, env)

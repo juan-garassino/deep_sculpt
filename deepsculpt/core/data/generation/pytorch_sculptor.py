@@ -639,6 +639,120 @@ class PyTorchSculptor:
             end_section("Sculpture generation failed")
             raise
 
+    def generate_architectural_sculpture(self, save_to_history: bool = True) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Generate a fixed scaffold with grid, three planes, and two orthogonal pipes."""
+        begin_section("Generating Architectural PyTorch Sculpture")
+
+        try:
+            if save_to_history:
+                self._save_state_to_history()
+
+            start_time = time.time()
+            initial_memory = self.get_memory_usage()
+
+            total_ops = (1 if self.grid[0] == 1 else 0) + self.edges[0] + 3 + 2
+            current_op = 0
+            log_info(f"Starting architectural sculpture generation with {total_ops} operations")
+
+            if self.grid[0] == 1:
+                current_op += 1
+                log_action(f"Adding grid ({current_op}/{total_ops})")
+                self.structure, self.colors = attach_grid_pytorch(
+                    self.structure, self.colors,
+                    step=self.grid[1],
+                    colors_dict=self.colors_dict,
+                    device=self.device,
+                    sparse_mode=self.sparse_mode,
+                    verbose=self.verbose,
+                )
+                self._check_memory_and_optimize()
+
+            for i in range(self.edges[0]):
+                current_op += 1
+                log_action(f"Adding edge {i+1}/{self.edges[0]} ({current_op}/{total_ops})")
+                self.structure, self.colors = attach_edge_pytorch(
+                    self.structure, self.colors,
+                    element_edge_min_ratio=self.edges[1],
+                    element_edge_max_ratio=self.edges[2],
+                    step=self.step,
+                    colors_dict=self.colors_dict,
+                    device=self.device,
+                    sparse_mode=self.sparse_mode,
+                    verbose=self.verbose,
+                )
+                self._check_memory_and_optimize()
+
+            for orientation in ("yz", "xz", "xy"):
+                current_op += 1
+                log_action(f"Adding {orientation} plane ({current_op}/{total_ops})")
+                self.structure, self.colors = attach_plane_pytorch(
+                    self.structure, self.colors,
+                    element_plane_min_ratio=self.planes[1],
+                    element_plane_max_ratio=self.planes[2],
+                    step=self.step,
+                    colors_dict=self.colors_dict,
+                    device=self.device,
+                    sparse_mode=self.sparse_mode,
+                    orientation=orientation,
+                    verbose=self.verbose,
+                )
+                self._check_memory_and_optimize()
+
+            for axis_selection, axis_name in ((0, "x"), (1, "y")):
+                current_op += 1
+                log_action(f"Adding {axis_name}-aligned pipe ({current_op}/{total_ops})")
+                self.structure, self.colors = attach_pipe_pytorch(
+                    self.structure, self.colors,
+                    element_volume_min_ratio=self.pipes[1],
+                    element_volume_max_ratio=self.pipes[2],
+                    step=self.step,
+                    colors_dict=self.colors_dict,
+                    device=self.device,
+                    sparse_mode=self.sparse_mode,
+                    axis_selection=axis_selection,
+                    verbose=self.verbose,
+                )
+                self._check_memory_and_optimize()
+
+            self._validate_sculpture_quality()
+
+            generation_time = time.time() - start_time
+            final_memory = self.get_memory_usage()
+
+            if self.structure.is_sparse:
+                dense = SparseTensorHandler.to_dense(self.structure)
+                filled = torch.sum(dense > 0).item()
+                total = dense.numel()
+            else:
+                filled = torch.sum(self.structure > 0).item()
+                total = self.structure.numel()
+
+            fill_pct = (filled / total) * 100
+            self._generation_stats = {
+                "generation_time": generation_time,
+                "filled_voxels": filled,
+                "total_voxels": total,
+                "fill_percentage": fill_pct,
+                "initial_memory_gb": initial_memory['allocated'],
+                "final_memory_gb": final_memory['allocated'],
+                "memory_delta_gb": final_memory['allocated'] - initial_memory['allocated'],
+                "operations_count": total_ops,
+                "sparse_mode": self.sparse_mode,
+                "structure_mode": "architectural",
+            }
+
+            log_info(f"Filled voxels: {filled}/{total} ({fill_pct:.2f}%)")
+            log_info(f"Memory usage: {final_memory['allocated']:.2f} GB")
+            log_success(f"Architectural sculpture generated in {generation_time:.2f} seconds")
+
+            end_section()
+            return self.structure, self.colors
+
+        except Exception as e:
+            log_error(f"Error generating architectural sculpture: {str(e)}")
+            end_section("Architectural sculpture generation failed")
+            raise
+
     def _check_memory_and_optimize(self):
         """Check memory usage and optimize if necessary."""
         usage = self.get_memory_usage()

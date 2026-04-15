@@ -5,6 +5,9 @@
 DATA_OUT ?= ./colab_data
 RUN_OUT ?= ./colab_runs
 DATA_MODE ?= reuse
+STRUCTURE_PRESET ?= architectural
+GRID_COUNT ?= 1
+GRID_STEP ?= 4
 NUM_SAMPLES ?= 100
 EPOCHS ?= 10
 BATCH_SIZE ?= 4
@@ -39,6 +42,9 @@ colab-train-mono:
 		--data-output "$(DATA_OUT)" \
 		--run-output "$(RUN_OUT)" \
 		--data-mode "$(DATA_MODE)" \
+		--structure-preset "$(STRUCTURE_PRESET)" \
+		--grid-count "$(GRID_COUNT)" \
+		--grid-step "$(GRID_STEP)" \
 		--num-samples "$(NUM_SAMPLES)" \
 		--epochs "$(EPOCHS)" \
 		--batch-size "$(BATCH_SIZE)" \
