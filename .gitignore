@@ -20,6 +20,7 @@ results/
 *.npy
 *.pkl
 *.pth
+*.pt
 
 results
 results/snapshots/*

@@ -114,12 +114,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Summarize the latest DeepSculpt run.")
     parser.add_argument("--run-output", required=True, help="Root directory containing gan_* or diffusion_* runs")
     parser.add_argument("--mode", required=True, choices=["gan", "diffusion"], help="Which training mode to summarize")
+    parser.add_argument(
+        "--fail-on-bad-status",
+        action="store_true",
+        help="Exit non-zero when the latest run should be discarded",
+    )
     args = parser.parse_args()
 
     run_output = Path(args.run_output).resolve()
     run_dir = _find_latest_run(run_output, args.mode)
     report = _gan_report(run_dir) if args.mode == "gan" else _diffusion_report(run_dir)
     print(json.dumps(report, indent=2))
+    if args.fail_on_bad_status and report.get("suggested_status") != "keep":
+        return 2
     return 0
 
 

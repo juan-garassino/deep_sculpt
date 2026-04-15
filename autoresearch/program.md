@@ -126,6 +126,15 @@ Strong negative signs:
 - collapse warnings dominate
 - helper reports `collapsed=true`
 
+If there is any clear sign of collapse:
+- stop treating the current direction as viable
+- mark the experiment as `discard`
+- revert or change the code
+- run a new experiment immediately
+
+Do not keep training iterations that already show obvious collapse just because they finished cleanly.
+For GAN, collapse is a hard failure signal, not a soft warning.
+
 ### Diffusion
 
 Primary goal:
@@ -149,3 +158,5 @@ Positive signs:
 - Keep experiments bounded and reviewable.
 - Prefer one clean idea per commit.
 - If a run crashes, inspect the traceback, make a focused fix if it is worthwhile, otherwise discard and move on.
+- After every run, use `scripts/autoresearch_report.py` as the decision gate.
+- If the report says `collapsed=true` for GAN, treat the run as failed immediately and move to the next code change.
