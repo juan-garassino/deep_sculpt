@@ -213,6 +213,9 @@ class DeepSculptV2Main:
         
         # Create data loader
         data_loader = self._create_data_loader(args)
+        collection_dir = self._resolve_collection_dir(Path(args.data_folder))
+        collection_metadata = self._load_collection_metadata(collection_dir) if collection_dir is not None else {}
+        occupancy_stats = collection_metadata.get("occupancy_stats", {})
         
         # Create model factory
         model_factory = PyTorchModelFactoryV2()
@@ -281,6 +284,13 @@ class DeepSculptV2Main:
             augment_p=args.augment_p,
             augment_target=args.augment_target,
             sample_from_ema=args.sample_from_ema,
+            occupancy_loss_weight=args.occupancy_loss_weight,
+            occupancy_floor=args.occupancy_floor,
+            occupancy_target_mode=args.occupancy_target_mode,
+            dataset_occupancy_mean=occupancy_stats.get("mean"),
+            dataset_occupancy_p10=occupancy_stats.get("p10"),
+            dataset_occupancy_p90=occupancy_stats.get("p90"),
+            snapshot_freq=args.snapshot_freq,
             checkpoint_dir=str(results_dir / "checkpoints"),
             log_dir=str(results_dir / "logs"),
             snapshot_dir=str(results_dir / "snapshots"),
@@ -335,11 +345,27 @@ class DeepSculptV2Main:
                 "augment": args.augment,
                 "augment_p": args.augment_p,
                 "augment_target": args.augment_target,
+                "occupancy_loss_weight": args.occupancy_loss_weight,
+                "occupancy_floor": args.occupancy_floor,
+                "occupancy_target_mode": args.occupancy_target_mode,
             }
         }
-        
+
         with open(results_dir / "config.json", 'w') as f:
             json.dump(config, f, indent=2)
+
+        with open(results_dir / "run_summary.json", "w") as f:
+            json.dump(
+                {
+                    "train_history": metrics,
+                    "last_epoch_metrics": trainer.last_epoch_metrics,
+                    "training_info": trainer.get_training_info(),
+                    "dataset_path": str(collection_dir) if collection_dir is not None else None,
+                    "dataset_occupancy_stats": occupancy_stats,
+                },
+                f,
+                indent=2,
+            )
         
         # Generate sample visualizations
         if args.generate_samples:
@@ -512,6 +538,7 @@ class DeepSculptV2Main:
             "timestamp": datetime.now().isoformat(),
             "dataset_paths": dataset_paths,
             "collection_dir": str(collector.date_dir),
+            "occupancy_stats": self._summarize_occupancy_stats(collector.get_generation_stats().get("occupancy_values", [])),
         }
         
         metadata_path = collector.date_dir / "dataset_metadata.json"
@@ -857,6 +884,32 @@ class DeepSculptV2Main:
             num_workers=0
         )
 
+    def _load_collection_metadata(self, collection_dir: Path) -> Dict[str, Any]:
+        """Load collection-level metadata if available."""
+        candidate_paths = [
+            collection_dir / "dataset_metadata.json",
+            collection_dir / "metadata" / "collection_metadata.json",
+        ]
+        for metadata_path in candidate_paths:
+            if metadata_path.exists():
+                with open(metadata_path, "r") as f:
+                    return json.load(f)
+        return {}
+
+    def _summarize_occupancy_stats(self, occupancy_values: List[float]) -> Dict[str, float]:
+        """Summarize occupancy values into stable metadata fields."""
+        if not occupancy_values:
+            return {}
+
+        occupancy_array = np.asarray(occupancy_values, dtype=np.float32)
+        return {
+            "mean": float(np.mean(occupancy_array)),
+            "min": float(np.min(occupancy_array)),
+            "max": float(np.max(occupancy_array)),
+            "p10": float(np.percentile(occupancy_array, 10)),
+            "p90": float(np.percentile(occupancy_array, 90)),
+        }
+
     def _resolve_collection_dir(self, data_folder: Path) -> Optional[Path]:
         """Resolve a data folder to a single collection directory."""
         if not data_folder.exists():
@@ -1000,7 +1053,7 @@ def create_parser():
     train_gan_parser.add_argument('--beta2', type=float, default=0.999, help='Adam beta2 parameter')
     train_gan_parser.add_argument('--data-folder', default='./data', help='Training data folder')
     train_gan_parser.add_argument('--output-dir', default='./results', help='Output directory')
-    train_gan_parser.add_argument('--snapshot-freq', type=int, default=10, help='Snapshot frequency (epochs)')
+    train_gan_parser.add_argument('--snapshot-freq', type=int, default=1, help='Snapshot frequency (epochs)')
     train_gan_parser.add_argument('--color', action='store_true', help='Enable color mode')
     train_gan_parser.add_argument('--sparse', action='store_true', help='Use sparse tensors')
     train_gan_parser.add_argument('--mixed-precision', action='store_true', help='Use mixed precision training')
@@ -1014,11 +1067,14 @@ def create_parser():
     train_gan_parser.add_argument('--use-ema', dest='use_ema', action='store_true', help='Use EMA weights for stable sampling/checkpoints')
     train_gan_parser.add_argument('--no-ema', dest='use_ema', action='store_false', help='Disable EMA weights')
     train_gan_parser.add_argument('--ema-decay', type=float, default=0.999, help='EMA decay for generator weights')
-    train_gan_parser.add_argument('--r1-gamma', type=float, default=10.0, help='R1 regularization gamma')
+    train_gan_parser.add_argument('--r1-gamma', type=float, default=2.0, help='R1 regularization gamma')
     train_gan_parser.add_argument('--r1-interval', type=int, default=16, help='R1 lazy regularization interval')
-    train_gan_parser.add_argument('--augment', default='ada-lite', choices=['none', 'ada-lite'], help='Discriminator-side augmentation policy')
+    train_gan_parser.add_argument('--augment', default='none', choices=['none', 'ada-lite'], help='Discriminator-side augmentation policy')
     train_gan_parser.add_argument('--augment-p', type=float, default=0.0, help='Initial augmentation probability')
-    train_gan_parser.add_argument('--augment-target', type=float, default=0.6, help='Target real accuracy for ADA-lite controller')
+    train_gan_parser.add_argument('--augment-target', type=float, default=0.7, help='Target real accuracy for ADA-lite controller')
+    train_gan_parser.add_argument('--occupancy-loss-weight', type=float, default=5.0, help='Weight for occupancy-matching generator regularization')
+    train_gan_parser.add_argument('--occupancy-floor', type=float, default=0.01, help='Minimum healthy fake occupancy before empty-collapse penalty activates')
+    train_gan_parser.add_argument('--occupancy-target-mode', default='batch_real', choices=['batch_real', 'dataset_mean'], help='Reference occupancy target for generator regularization')
     train_gan_parser.add_argument('--sample-from-ema', dest='sample_from_ema', action='store_true', help='Use EMA generator for exported samples')
     train_gan_parser.add_argument('--sample-from-raw', dest='sample_from_ema', action='store_false', help='Use raw generator for exported samples')
     train_gan_parser.add_argument('--mlflow', action='store_true', help='Enable MLflow tracking')

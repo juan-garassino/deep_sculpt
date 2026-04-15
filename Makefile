@@ -22,11 +22,14 @@ DIFFUSION_SAMPLER ?= ddim
 GUIDANCE_SCALE ?= 1.0
 NUM_WORKERS ?= 0
 DISCRIMINATOR_TYPE ?= spectral_norm
-R1_GAMMA ?= 10.0
+R1_GAMMA ?= 2.0
 R1_INTERVAL ?= 16
-GAN_AUGMENT ?= ada-lite
+GAN_AUGMENT ?= none
 GAN_AUGMENT_P ?= 0.0
-GAN_AUGMENT_TARGET ?= 0.6
+GAN_AUGMENT_TARGET ?= 0.7
+OCCUPANCY_LOSS_WEIGHT ?= 5.0
+OCCUPANCY_FLOOR ?= 0.01
+OCCUPANCY_TARGET_MODE ?= batch_real
 EMA_DECAY ?= 0.999
 
 .PHONY: colab-train-mono colab-train-diffusion
@@ -49,6 +52,9 @@ colab-train-mono:
 		--augment "$(GAN_AUGMENT)" \
 		--augment-p "$(GAN_AUGMENT_P)" \
 		--augment-target "$(GAN_AUGMENT_TARGET)" \
+		--occupancy-loss-weight "$(OCCUPANCY_LOSS_WEIGHT)" \
+		--occupancy-floor "$(OCCUPANCY_FLOOR)" \
+		--occupancy-target-mode "$(OCCUPANCY_TARGET_MODE)" \
 		--ema-decay "$(EMA_DECAY)"
 
 colab-train-diffusion:

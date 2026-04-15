@@ -10,6 +10,7 @@ import os
 import time
 import logging
 import copy
+import json
 from typing import Dict, Any, Optional, Tuple, List, Union, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -109,6 +110,9 @@ class GANTrainer(BaseTrainer):
             'r1_penalty': [],
             'augment_p': [],
             'fake_occupancy': [],
+            'real_occupancy': [],
+            'occupancy_gap': [],
+            'occupancy_penalty': [],
             'gen_grad_norm': [],
             'disc_grad_norm': [],
         })
@@ -138,6 +142,8 @@ class GANTrainer(BaseTrainer):
         self.augment_p = float(getattr(config, "augment_p", 0.0))
         self.collapse_events = 0
         self.nan_events = 0
+        self.last_epoch_metrics: Dict[str, float] = {}
+        self.last_run_summary: Dict[str, Any] = {}
 
     def _create_ema_generator(self) -> nn.Module:
         """Create EMA version of the generator for stable sampling."""
@@ -213,6 +219,28 @@ class GANTrainer(BaseTrainer):
             total_norm_sq += float(param.grad.detach().norm(2).item() ** 2)
         return total_norm_sq ** 0.5
 
+    def _compute_occupancy(self, batch: torch.Tensor) -> torch.Tensor:
+        """Compute scalar occupancy ratio for a voxel batch."""
+        return (batch.detach().abs() > 0).float().mean()
+
+    def _occupancy_target(self, real_occupancy: torch.Tensor) -> torch.Tensor:
+        """Resolve the occupancy target for generator regularization."""
+        if getattr(self.config, "occupancy_target_mode", "batch_real") == "dataset_mean":
+            dataset_mean = getattr(self.config, "dataset_occupancy_mean", None)
+            if dataset_mean is not None:
+                return real_occupancy.new_tensor(float(dataset_mean))
+        return real_occupancy.detach()
+
+    def _occupancy_penalty(self, fake_batch: torch.Tensor, real_occupancy: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Penalize collapse toward all-empty or occupancy-mismatched outputs."""
+        fake_occupancy = self._compute_occupancy(fake_batch)
+        target = self._occupancy_target(real_occupancy)
+        occupancy_gap = fake_occupancy - target
+        floor = float(getattr(self.config, "occupancy_floor", 0.01))
+        floor_penalty = F.relu(fake_occupancy.new_tensor(floor) - fake_occupancy)
+        penalty = occupancy_gap.square() + floor_penalty.square()
+        return penalty, fake_occupancy
+
     def _check_step_health(self, metrics: Dict[str, float]):
         """Emit warnings on obvious collapse or non-finite states."""
         values = [value for value in metrics.values() if isinstance(value, (int, float))]
@@ -222,14 +250,29 @@ class GANTrainer(BaseTrainer):
             if getattr(self.config, "nan_guard", True):
                 raise RuntimeError("Non-finite GAN metrics detected")
 
-        if metrics.get("disc_loss", 1.0) < 1e-3 or metrics.get("fake_occupancy", 0.5) < 1e-4 or metrics.get("fake_occupancy", 0.5) > 0.9999:
+        occupancy_floor = float(getattr(self.config, "occupancy_floor", 0.01))
+        if (
+            metrics.get("disc_loss", 1.0) < 1e-3
+            or metrics.get("fake_occupancy", 0.5) < occupancy_floor
+            or metrics.get("fake_occupancy", 0.5) > 0.9999
+        ):
             self.collapse_events += 1
             if self.collapse_events >= 3:
+                status = "empty"
+                if metrics.get("fake_occupancy", 0.5) > 0.9999:
+                    status = "full"
                 self.logger.warning(
-                    "Potential GAN collapse detected: disc_loss=%.6f fake_occupancy=%.6f",
+                    "Potential %s GAN collapse detected: disc_loss=%.6f fake_occupancy=%.6f real_occupancy=%.6f gap=%.6f",
+                    status,
                     metrics.get("disc_loss", 0.0),
                     metrics.get("fake_occupancy", 0.0),
+                    metrics.get("real_occupancy", 0.0),
+                    metrics.get("occupancy_gap", 0.0),
                 )
+                if metrics.get("augment_p", 0.0) >= 0.8 and metrics.get("fake_occupancy", 1.0) < occupancy_floor:
+                    self.logger.warning(
+                        "ADA-lite is saturated while occupancy remains below floor; discriminator pressure is likely too high for this dataset."
+                    )
         else:
             self.collapse_events = 0
     
@@ -324,6 +367,7 @@ class GANTrainer(BaseTrainer):
         batch_size = real_data.size(0)
         autocast_enabled = self.config.mixed_precision and self.device != "cpu"
         r1_penalty_value = 0.0
+        real_occupancy = self._compute_occupancy(real_data)
 
         self.disc_optimizer.zero_grad(set_to_none=True)
         noise = torch.randn(batch_size, self.noise_dim, device=self.device)
@@ -357,6 +401,9 @@ class GANTrainer(BaseTrainer):
             fake_for_gen = self.generator(noise)
             gen_logits = self.discriminator(self._apply_ada_lite(fake_for_gen))
             gen_loss = F.softplus(-gen_logits).mean()
+            occupancy_penalty, fake_occupancy = self._occupancy_penalty(fake_for_gen, real_occupancy)
+            occupancy_loss = occupancy_penalty * float(getattr(self.config, "occupancy_loss_weight", 5.0))
+            gen_loss = gen_loss + occupancy_loss
 
         gen_loss.backward()
         if self.config.gradient_clip > 0:
@@ -378,13 +425,17 @@ class GANTrainer(BaseTrainer):
             "gradient_penalty": 0.0,
             "r1_penalty": r1_penalty_value,
             "augment_p": float(self.augment_p),
-            "fake_occupancy": float((fake_for_gen.detach() > 0).float().mean().item()),
+            "real_occupancy": float(real_occupancy.item()),
+            "fake_occupancy": float(fake_occupancy.item()),
+            "occupancy_gap": float((fake_occupancy - self._occupancy_target(real_occupancy)).item()),
+            "occupancy_penalty": float(occupancy_penalty.item()),
             "gen_grad_norm": gen_grad_norm,
             "disc_grad_norm": disc_grad_norm,
         }
 
-        self.metrics_tracker.update_step_metrics(step_metrics)
         self._check_step_health(step_metrics)
+        step_metrics["collapse_events"] = float(self.collapse_events)
+        self.metrics_tracker.update_step_metrics(step_metrics)
         return step_metrics
     
     def train_epoch(self, dataloader: DataLoader) -> Dict[str, float]:
@@ -411,6 +462,9 @@ class GANTrainer(BaseTrainer):
             'r1_penalty': [],
             'augment_p': [],
             'fake_occupancy': [],
+            'real_occupancy': [],
+            'occupancy_gap': [],
+            'occupancy_penalty': [],
             'gen_grad_norm': [],
             'disc_grad_norm': [],
         }
@@ -473,7 +527,10 @@ class GANTrainer(BaseTrainer):
                     f"Disc Loss: {step_metrics.get('disc_loss', 0):.4f}, "
                     f"R1: {step_metrics.get('r1_penalty', 0):.4f}, "
                     f"AugP: {step_metrics.get('augment_p', 0):.3f}, "
-                    f"Occ: {step_metrics.get('fake_occupancy', 0):.4f}"
+                    f"RealOcc: {step_metrics.get('real_occupancy', 0):.4f}, "
+                    f"FakeOcc: {step_metrics.get('fake_occupancy', 0):.4f}, "
+                    f"OccGap: {step_metrics.get('occupancy_gap', 0):.4f}, "
+                    f"OccPenalty: {step_metrics.get('occupancy_penalty', 0):.4f}"
                 )
             
             self.global_step += 1
@@ -489,9 +546,49 @@ class GANTrainer(BaseTrainer):
         
         # Update metrics tracker
         self.metrics_tracker.update_epoch_metrics(avg_metrics)
-        
+        self.last_epoch_metrics = avg_metrics
+
         return avg_metrics
-    
+
+    def _snapshot_sample_stats(self, samples: torch.Tensor) -> Dict[str, float]:
+        occupancy = (samples.detach().abs() > 0).float().reshape(samples.shape[0], -1).mean(dim=1)
+        nonzero = (samples.detach().abs() > 0).reshape(samples.shape[0], -1).sum(dim=1).float()
+        return {
+            "mean_occupancy": float(occupancy.mean().item()),
+            "min_occupancy": float(occupancy.min().item()),
+            "max_occupancy": float(occupancy.max().item()),
+            "mean_nonzero_voxels": float(nonzero.mean().item()),
+            "min_nonzero_voxels": float(nonzero.min().item()),
+            "max_nonzero_voxels": float(nonzero.max().item()),
+        }
+
+    def _save_epoch_snapshot(self, epoch: int, train_metrics: Dict[str, float]) -> None:
+        os.makedirs(self.config.snapshot_dir, exist_ok=True)
+        samples = self.generate_samples(num_samples=4, use_fixed_noise=True).detach().cpu()
+        snapshot_stats = self._snapshot_sample_stats(samples)
+        snapshot_stem = Path(self.config.snapshot_dir) / f"epoch_{epoch + 1:03d}"
+        torch.save(samples, snapshot_stem.with_suffix(".pt"))
+        with open(snapshot_stem.with_suffix(".json"), "w") as f:
+            json.dump(
+                {
+                    "epoch": epoch + 1,
+                    "train_metrics": train_metrics,
+                    "sample_stats": snapshot_stats,
+                },
+                f,
+                indent=2,
+            )
+
+    def _after_epoch(
+        self,
+        epoch: int,
+        train_metrics: Dict[str, float],
+        val_metrics: Optional[Dict[str, float]],
+        is_best: bool,
+    ) -> None:
+        if (epoch + 1) % max(1, self.config.snapshot_freq) == 0:
+            self._save_epoch_snapshot(epoch, train_metrics)
+
     def validate(self, dataloader: DataLoader) -> Dict[str, float]:
         """
         Validate the model.
@@ -700,5 +797,8 @@ class GANTrainer(BaseTrainer):
             "augment": getattr(self.config, "augment", "none"),
             "augment_p": self.augment_p,
             "use_ema": self.ema_generator is not None,
+            "collapse_events": self.collapse_events,
+            "dataset_occupancy_mean": getattr(self.config, "dataset_occupancy_mean", None),
+            "last_epoch_metrics": self.last_epoch_metrics,
         })
         return info

@@ -305,6 +305,7 @@ class PyTorchCollector:
                 "memory_usage": {},
                 "batch_sizes": [],
                 "errors": 0,
+                "occupancy_values": [],
             }
             
             log_success(f"PyTorchCollector initialized with format={output_format}, device={self.device}")
@@ -543,6 +544,8 @@ class PyTorchCollector:
     def _save_sample(self, sample_idx: int, structure: torch.Tensor, colors: torch.Tensor) -> str:
         """Save a single sample in the specified format."""
         sample_num = f"{sample_idx:06d}"
+        occupancy = float((structure.detach().abs() > 0).float().mean().item())
+        self.generation_stats["occupancy_values"].append(occupancy)
         
         if self.output_format == "pytorch":
             # Ensure structure has correct shape for model compatibility
@@ -651,6 +654,18 @@ class PyTorchCollector:
     
     def _save_collection_metadata(self, num_samples: int, sample_paths: List[str]):
         """Save final collection metadata."""
+        occupancy_values = self.generation_stats.get("occupancy_values", [])
+        occupancy_stats = {}
+        if occupancy_values:
+            occupancy_array = np.asarray(occupancy_values, dtype=np.float32)
+            occupancy_stats = {
+                "mean": float(np.mean(occupancy_array)),
+                "min": float(np.min(occupancy_array)),
+                "max": float(np.max(occupancy_array)),
+                "p10": float(np.percentile(occupancy_array, 10)),
+                "p90": float(np.percentile(occupancy_array, 90)),
+            }
+
         metadata = {
             "collection_info": {
                 "num_samples": num_samples,
@@ -663,6 +678,7 @@ class PyTorchCollector:
             },
             "sculptor_config": self.sculptor_config,
             "generation_stats": self.generation_stats,
+            "occupancy_stats": occupancy_stats,
             "sample_paths": sample_paths[:100],  # Save first 100 paths as examples
             "directory_structure": {
                 "base_dir": str(self.base_dir),

@@ -78,11 +78,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-inference-samples", type=int, default=4, help="Number of samples to infer after training")
     parser.add_argument("--num-workers", type=int, default=0, help="Training dataloader workers")
     parser.add_argument("--discriminator-type", default="spectral_norm", help="GAN discriminator type")
-    parser.add_argument("--r1-gamma", type=float, default=10.0, help="R1 regularization gamma")
+    parser.add_argument("--r1-gamma", type=float, default=2.0, help="R1 regularization gamma")
     parser.add_argument("--r1-interval", type=int, default=16, help="R1 regularization interval")
-    parser.add_argument("--augment", default="ada-lite", choices=["none", "ada-lite"], help="Discriminator augmentation policy")
+    parser.add_argument("--augment", default="none", choices=["none", "ada-lite"], help="Discriminator augmentation policy")
     parser.add_argument("--augment-p", type=float, default=0.0, help="Initial augmentation probability")
-    parser.add_argument("--augment-target", type=float, default=0.6, help="Target real accuracy for ADA-lite")
+    parser.add_argument("--augment-target", type=float, default=0.7, help="Target real accuracy for ADA-lite")
+    parser.add_argument("--occupancy-loss-weight", type=float, default=5.0, help="Weight for occupancy regularization")
+    parser.add_argument("--occupancy-floor", type=float, default=0.01, help="Minimum healthy occupancy floor")
+    parser.add_argument("--occupancy-target-mode", default="batch_real", choices=["batch_real", "dataset_mean"], help="Occupancy target source")
     parser.add_argument("--ema-decay", type=float, default=0.999, help="EMA decay")
     parser.add_argument("--mixed-precision", action="store_true", help="Enable mixed precision for GAN training")
     parser.add_argument("--cpu", action="store_true", help="Force CPU mode")
@@ -144,6 +147,9 @@ def main() -> int:
         f"--augment={args.augment}",
         f"--augment-p={args.augment_p}",
         f"--augment-target={args.augment_target}",
+        f"--occupancy-loss-weight={args.occupancy_loss_weight}",
+        f"--occupancy-floor={args.occupancy_floor}",
+        f"--occupancy-target-mode={args.occupancy_target_mode}",
         f"--ema-decay={args.ema_decay}",
         "--use-ema",
         "--sample-from-ema",

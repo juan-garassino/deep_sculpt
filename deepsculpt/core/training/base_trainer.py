@@ -68,6 +68,12 @@ class TrainingConfig:
     augment_target: float = 0.6
     sample_from_ema: bool = True
     nan_guard: bool = True
+    occupancy_loss_weight: float = 5.0
+    occupancy_floor: float = 0.01
+    occupancy_target_mode: str = "batch_real"
+    dataset_occupancy_mean: Optional[float] = None
+    dataset_occupancy_p10: Optional[float] = None
+    dataset_occupancy_p90: Optional[float] = None
     
     # Distributed training
     distributed: bool = False
@@ -330,6 +336,8 @@ class BaseTrainer(ABC):
                     f"checkpoint_epoch_{epoch + 1}.pth"
                 )
                 self.save_checkpoint(checkpoint_path, epoch, epoch_metrics, is_best)
+
+            self._after_epoch(epoch, train_metrics, val_metrics, is_best)
             
             # Early stopping
             if self.config.early_stopping and self.epochs_without_improvement >= self.config.patience:
@@ -338,6 +346,16 @@ class BaseTrainer(ABC):
         
         self.logger.info("Training completed")
         return training_history
+
+    def _after_epoch(
+        self,
+        epoch: int,
+        train_metrics: Dict[str, float],
+        val_metrics: Optional[Dict[str, float]],
+        is_best: bool,
+    ) -> None:
+        """Optional per-epoch hook for trainer-specific snapshotting or reporting."""
+        return None
 
     def _resolve_primary_loss(self, metrics: Optional[Dict[str, Any]]) -> float:
         """Resolve a primary loss value for logging/history across trainer types."""

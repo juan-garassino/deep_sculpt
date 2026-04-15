@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from scripts.colab_train import build_env, find_generator_checkpoint, find_latest_dataset
+from scripts.colab_train import build_env, build_parser, find_generator_checkpoint, find_latest_dataset
 
 
 def test_build_env_includes_repo_and_package_paths(tmp_path):
@@ -42,3 +42,30 @@ def test_find_latest_dataset_uses_generated_metadata(tmp_path):
     dataset = find_latest_dataset(tmp_path)
 
     assert dataset == newer
+
+
+def test_find_latest_dataset_accepts_collection_metadata(tmp_path):
+    dataset_dir = tmp_path / "2026-04-15"
+    metadata_dir = dataset_dir / "metadata"
+    metadata_dir.mkdir(parents=True)
+    (metadata_dir / "collection_metadata.json").write_text("{}")
+
+    dataset = find_latest_dataset(tmp_path)
+
+    assert dataset == dataset_dir
+
+
+def test_build_parser_uses_sparse_3d_safe_defaults():
+    parser = build_parser()
+
+    args = parser.parse_args([
+        "--data-output", "/tmp/data",
+        "--run-output", "/tmp/runs",
+    ])
+
+    assert args.r1_gamma == 2.0
+    assert args.augment == "none"
+    assert args.augment_target == 0.7
+    assert args.occupancy_loss_weight == 5.0
+    assert args.occupancy_floor == 0.01
+    assert args.occupancy_target_mode == "batch_real"
