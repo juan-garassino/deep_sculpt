@@ -1,53 +1,26 @@
 #!/usr/bin/env python3
-"""Generate data, train a monochrome GAN, and save inference samples."""
+"""Generate data, train a diffusion model, and save inference samples."""
 
 import argparse
-import os
-import subprocess
 import sys
 from pathlib import Path
 
-
-def build_env(repo_root: Path, mpl_config_dir: Path) -> dict:
-    env = os.environ.copy()
-    pythonpath_parts = [
-        str(repo_root),
-        str(repo_root / "deepsculpt"),
-    ]
-    existing_pythonpath = env.get("PYTHONPATH")
-    if existing_pythonpath:
-        pythonpath_parts.append(existing_pythonpath)
-
-    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
-    env.setdefault("MPLCONFIGDIR", str(mpl_config_dir))
-    return env
-
-
-def run_command(cmd, cwd: Path, env: dict) -> None:
-    print("$", " ".join(str(part) for part in cmd))
-    subprocess.run(cmd, cwd=cwd, env=env, check=True)
+from colab_train import build_env, run_command
 
 
 def find_latest_run(run_output: Path) -> Path:
     candidates = sorted(
-        [path for path in run_output.glob("gan_*") if path.is_dir()],
+        [path for path in run_output.glob("diffusion_*") if path.is_dir()],
         key=lambda path: path.stat().st_mtime,
     )
     if not candidates:
-        raise FileNotFoundError(f"No GAN run directory found under {run_output}")
+        raise FileNotFoundError(f"No diffusion run directory found under {run_output}")
     return candidates[-1]
-
-
-def find_generator_checkpoint(run_dir: Path) -> Path:
-    ema_checkpoint = run_dir / "ema_generator_final.pt"
-    if ema_checkpoint.exists():
-        return ema_checkpoint
-    return run_dir / "generator_final.pt"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Colab-friendly DeepSculpt monochrome training pipeline"
+        description="Colab-friendly DeepSculpt diffusion training pipeline"
     )
     parser.add_argument("--data-output", required=True, help="Base directory for generated training data")
     parser.add_argument("--run-output", required=True, help="Base directory for models and inference outputs")
@@ -55,18 +28,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs", type=int, default=10, help="Training epochs")
     parser.add_argument("--batch-size", type=int, default=4, help="Training batch size")
     parser.add_argument("--void-dim", type=int, default=32, help="Voxel dimension")
-    parser.add_argument("--noise-dim", type=int, default=100, help="GAN noise dimension")
-    parser.add_argument("--learning-rate", type=float, default=0.0002, help="GAN learning rate")
+    parser.add_argument("--timesteps", type=int, default=100, help="Diffusion timesteps")
+    parser.add_argument("--learning-rate", type=float, default=1e-4, help="Diffusion learning rate")
+    parser.add_argument("--weight-decay", type=float, default=0.01, help="Diffusion weight decay")
+    parser.add_argument("--noise-schedule", default="cosine", choices=["linear", "cosine", "sigmoid"], help="Noise schedule")
+    parser.add_argument("--beta-start", type=float, default=0.0001, help="Noise schedule beta start")
+    parser.add_argument("--beta-end", type=float, default=0.02, help="Noise schedule beta end")
     parser.add_argument("--num-inference-samples", type=int, default=4, help="Number of samples to infer after training")
+    parser.add_argument("--num-inference-steps", type=int, default=50, help="Number of denoising steps for sample generation")
     parser.add_argument("--num-workers", type=int, default=0, help="Training dataloader workers")
-    parser.add_argument("--discriminator-type", default="spectral_norm", help="GAN discriminator type")
-    parser.add_argument("--r1-gamma", type=float, default=10.0, help="R1 regularization gamma")
-    parser.add_argument("--r1-interval", type=int, default=16, help="R1 regularization interval")
-    parser.add_argument("--augment", default="ada-lite", choices=["none", "ada-lite"], help="Discriminator augmentation policy")
-    parser.add_argument("--augment-p", type=float, default=0.0, help="Initial augmentation probability")
-    parser.add_argument("--augment-target", type=float, default=0.6, help="Target real accuracy for ADA-lite")
-    parser.add_argument("--ema-decay", type=float, default=0.999, help="EMA decay")
-    parser.add_argument("--mixed-precision", action="store_true", help="Enable mixed precision for GAN training")
+    parser.add_argument("--ema-decay", type=float, default=0.9999, help="EMA decay")
+    parser.add_argument("--mixed-precision", action="store_true", help="Enable mixed precision for diffusion training")
     parser.add_argument("--cpu", action="store_true", help="Force CPU mode")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose CLI output")
     return parser
@@ -102,40 +74,36 @@ def main() -> int:
 
     train_cmd = [
         *base_cmd,
-        "train-gan",
-        "--model-type=skip",
+        "train-diffusion",
+        f"--data-folder={data_output}",
+        f"--output-dir={run_output}",
         f"--epochs={args.epochs}",
         f"--batch-size={args.batch_size}",
         f"--void-dim={args.void_dim}",
-        f"--noise-dim={args.noise_dim}",
+        f"--timesteps={args.timesteps}",
         f"--learning-rate={args.learning_rate}",
-        f"--data-folder={data_output}",
-        f"--output-dir={run_output}",
+        f"--weight-decay={args.weight_decay}",
+        f"--noise-schedule={args.noise_schedule}",
+        f"--beta-start={args.beta_start}",
+        f"--beta-end={args.beta_end}",
         f"--num-workers={args.num_workers}",
-        f"--discriminator-type={args.discriminator_type}",
-        f"--r1-gamma={args.r1_gamma}",
-        f"--r1-interval={args.r1_interval}",
-        f"--augment={args.augment}",
-        f"--augment-p={args.augment_p}",
-        f"--augment-target={args.augment_target}",
         f"--ema-decay={args.ema_decay}",
         "--use-ema",
-        "--sample-from-ema",
-        "--generate-samples",
     ]
     if args.mixed_precision and not args.cpu:
         train_cmd.append("--mixed-precision")
     run_command(train_cmd, repo_root, env)
 
     latest_run = find_latest_run(run_output)
-    checkpoint = find_generator_checkpoint(latest_run)
+    checkpoint = latest_run / "diffusion_final.pt"
     inference_output = latest_run / "inference_samples"
 
     sample_cmd = [
         *base_cmd,
-        "sample-gan",
+        "sample-diffusion",
         f"--checkpoint={checkpoint}",
         f"--num-samples={args.num_inference_samples}",
+        f"--num-steps={args.num_inference_steps}",
         f"--output-dir={inference_output}",
         "--visualize",
     ]

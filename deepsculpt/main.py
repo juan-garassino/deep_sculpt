@@ -227,7 +227,7 @@ class DeepSculptV2Main:
         ).to(self.device)
         
         discriminator = model_factory.create_gan_discriminator(
-            model_type="simple",  # Use simple discriminator for skip generator
+            model_type=args.discriminator_type,
             void_dim=args.void_dim,
             color_mode=0,  # Use monochrome mode for single channel
             sparse=args.sparse
@@ -273,6 +273,17 @@ class DeepSculptV2Main:
             beta2=args.beta2,
             mixed_precision=args.mixed_precision,
             gradient_clip=args.gradient_clip,
+            use_ema=args.use_ema,
+            ema_decay=args.ema_decay,
+            r1_gamma=args.r1_gamma,
+            r1_interval=args.r1_interval,
+            augment=args.augment,
+            augment_p=args.augment_p,
+            augment_target=args.augment_target,
+            sample_from_ema=args.sample_from_ema,
+            checkpoint_dir=str(results_dir / "checkpoints"),
+            log_dir=str(results_dir / "logs"),
+            snapshot_dir=str(results_dir / "snapshots"),
             use_tensorboard=False,  # Disable TensorBoard since it's not available
             use_wandb=False,
             use_mlflow=False
@@ -299,6 +310,8 @@ class DeepSculptV2Main:
         
         # Save final models
         torch.save(generator.state_dict(), results_dir / "generator_final.pt")
+        if trainer.ema_generator is not None:
+            torch.save(trainer.ema_generator.state_dict(), results_dir / "ema_generator_final.pt")
         torch.save(discriminator.state_dict(), results_dir / "discriminator_final.pt")
         
         # Save configuration
@@ -308,12 +321,20 @@ class DeepSculptV2Main:
             "noise_dim": args.noise_dim,
             "color_mode": 1 if args.color else 0,
             "sparse": args.sparse,
+            "discriminator_type": args.discriminator_type,
+            "use_ema": args.use_ema,
+            "sample_from_ema": args.sample_from_ema,
             "training_params": {
                 "epochs": args.epochs,
                 "batch_size": args.batch_size,
                 "learning_rate": args.learning_rate,
                 "beta1": args.beta1,
-                "beta2": args.beta2
+                "beta2": args.beta2,
+                "r1_gamma": args.r1_gamma,
+                "r1_interval": args.r1_interval,
+                "augment": args.augment,
+                "augment_p": args.augment_p,
+                "augment_target": args.augment_target,
             }
         }
         
@@ -322,7 +343,7 @@ class DeepSculptV2Main:
         
         # Generate sample visualizations
         if args.generate_samples:
-            self._generate_sample_visualizations(generator, results_dir, args)
+            self._generate_sample_visualizations(trainer._generator_for_sampling(), results_dir, args)
         
         print(f"Training completed! Results saved to {results_dir}")
         return 0
@@ -400,6 +421,11 @@ class DeepSculptV2Main:
             learning_rate=args.learning_rate,
             epochs=args.epochs,
             mixed_precision=args.mixed_precision,
+            use_ema=args.use_ema,
+            ema_decay=args.ema_decay,
+            checkpoint_dir=str(results_dir / "checkpoints"),
+            log_dir=str(results_dir / "logs"),
+            snapshot_dir=str(results_dir / "snapshots"),
             use_tensorboard=False,
             use_wandb=False,
             use_mlflow=False
@@ -423,13 +449,15 @@ class DeepSculptV2Main:
         
         # Save final model
         torch.save({
-            'model_state_dict': model.state_dict(),
+            'model_state_dict': (trainer.ema_model.state_dict() if trainer.ema_model is not None else model.state_dict()),
+            'raw_model_state_dict': model.state_dict(),
             'noise_scheduler': noise_scheduler,
             'config': {
                 'void_dim': args.void_dim,
                 'timesteps': args.timesteps,
                 'noise_schedule': args.noise_schedule,
-                'sparse': args.sparse
+                'sparse': args.sparse,
+                'use_ema': args.use_ema,
             }
         }, results_dir / "diffusion_final.pt")
         
@@ -956,13 +984,27 @@ def create_parser():
     train_gan_parser.add_argument('--sparse', action='store_true', help='Use sparse tensors')
     train_gan_parser.add_argument('--mixed-precision', action='store_true', help='Use mixed precision training')
     train_gan_parser.add_argument('--gradient-clip', type=float, default=1.0, help='Gradient clipping value')
+    train_gan_parser.add_argument('--discriminator-type', default='spectral_norm',
+                                 choices=['simple', 'complex', 'progressive', 'conditional', 'spectral_norm', 'multi_scale', 'patch'],
+                                 help='Type of discriminator to train against')
     train_gan_parser.add_argument('--scheduler', action='store_true', help='Use learning rate scheduler')
     train_gan_parser.add_argument('--scheduler-step', type=int, default=30, help='Scheduler step size')
     train_gan_parser.add_argument('--scheduler-gamma', type=float, default=0.1, help='Scheduler gamma')
+    train_gan_parser.add_argument('--use-ema', dest='use_ema', action='store_true', help='Use EMA weights for stable sampling/checkpoints')
+    train_gan_parser.add_argument('--no-ema', dest='use_ema', action='store_false', help='Disable EMA weights')
+    train_gan_parser.add_argument('--ema-decay', type=float, default=0.999, help='EMA decay for generator weights')
+    train_gan_parser.add_argument('--r1-gamma', type=float, default=10.0, help='R1 regularization gamma')
+    train_gan_parser.add_argument('--r1-interval', type=int, default=16, help='R1 lazy regularization interval')
+    train_gan_parser.add_argument('--augment', default='ada-lite', choices=['none', 'ada-lite'], help='Discriminator-side augmentation policy')
+    train_gan_parser.add_argument('--augment-p', type=float, default=0.0, help='Initial augmentation probability')
+    train_gan_parser.add_argument('--augment-target', type=float, default=0.6, help='Target real accuracy for ADA-lite controller')
+    train_gan_parser.add_argument('--sample-from-ema', dest='sample_from_ema', action='store_true', help='Use EMA generator for exported samples')
+    train_gan_parser.add_argument('--sample-from-raw', dest='sample_from_ema', action='store_false', help='Use raw generator for exported samples')
     train_gan_parser.add_argument('--mlflow', action='store_true', help='Enable MLflow tracking')
     train_gan_parser.add_argument('--wandb', action='store_true', help='Enable Weights & Biases tracking')
     train_gan_parser.add_argument('--generate-samples', action='store_true', help='Generate sample visualizations')
     train_gan_parser.add_argument('--num-workers', type=int, default=4, help='Number of data loader workers')
+    train_gan_parser.set_defaults(use_ema=True, sample_from_ema=True)
     
     # Diffusion training
     train_diff_parser = subparsers.add_parser('train-diffusion', help='Train diffusion models')
@@ -982,8 +1024,12 @@ def create_parser():
     train_diff_parser.add_argument('--sparse', action='store_true', help='Use sparse tensors')
     train_diff_parser.add_argument('--mixed-precision', action='store_true', help='Use mixed precision training')
     train_diff_parser.add_argument('--scheduler', action='store_true', help='Use learning rate scheduler')
+    train_diff_parser.add_argument('--use-ema', dest='use_ema', action='store_true', help='Use EMA weights for diffusion checkpoints/sampling')
+    train_diff_parser.add_argument('--no-ema', dest='use_ema', action='store_false', help='Disable EMA weights for diffusion checkpoints/sampling')
+    train_diff_parser.add_argument('--ema-decay', type=float, default=0.9999, help='EMA decay for diffusion model weights')
     train_diff_parser.add_argument('--mlflow', action='store_true', help='Enable MLflow tracking')
     train_diff_parser.add_argument('--num-workers', type=int, default=4, help='Number of data loader workers')
+    train_diff_parser.set_defaults(use_ema=True)
     
     # Data generation
     gen_parser = subparsers.add_parser('generate-data', help='Generate synthetic 3D data')

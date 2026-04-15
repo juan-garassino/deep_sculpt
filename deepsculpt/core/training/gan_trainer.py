@@ -9,6 +9,7 @@ comprehensive monitoring capabilities.
 import os
 import time
 import logging
+import copy
 from typing import Dict, Any, Optional, Tuple, List, Union, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,7 +27,6 @@ from datetime import datetime
 
 from .base_trainer import BaseTrainer, TrainingConfig
 from .training_metrics import TrainingMetrics
-from .training_loops import GANTrainingLoop
 
 
 class GANTrainer(BaseTrainer):
@@ -105,7 +105,12 @@ class GANTrainer(BaseTrainer):
             'disc_fake_acc': [],
             'gradient_penalty': [],
             'disc_real_loss': [],
-            'disc_fake_loss': []
+            'disc_fake_loss': [],
+            'r1_penalty': [],
+            'augment_p': [],
+            'fake_occupancy': [],
+            'gen_grad_norm': [],
+            'disc_grad_norm': [],
         })
         
         # Progressive growing parameters
@@ -127,18 +132,106 @@ class GANTrainer(BaseTrainer):
         if config.distributed:
             self.discriminator = DDP(self.discriminator, device_ids=[config.rank])
         
-        # Initialize training loop
-        self.training_loop = GANTrainingLoop(
-            generator=self.generator,
-            discriminator=self.discriminator,
-            loss_type=loss_type,
-            use_gradient_penalty=use_gradient_penalty,
-            gradient_penalty_weight=gradient_penalty_weight,
-            device=device
-        )
-        
         # Initialize metrics tracker
         self.metrics_tracker = TrainingMetrics()
+        self.ema_generator = self._create_ema_generator() if config.use_ema else None
+        self.augment_p = float(getattr(config, "augment_p", 0.0))
+        self.collapse_events = 0
+        self.nan_events = 0
+
+    def _create_ema_generator(self) -> nn.Module:
+        """Create EMA version of the generator for stable sampling."""
+        ema_generator = copy.deepcopy(self.generator)
+        ema_generator.eval()
+        return ema_generator.to(self.device)
+
+    def _update_ema_generator(self):
+        """Update EMA generator weights."""
+        if self.ema_generator is None:
+            return
+
+        ema_decay = getattr(self.config, "ema_decay", 0.999)
+        with torch.no_grad():
+            for ema_param, param in zip(self.ema_generator.parameters(), self.generator.parameters()):
+                ema_param.data.mul_(ema_decay).add_(param.data, alpha=1 - ema_decay)
+
+    def _generator_for_sampling(self) -> nn.Module:
+        """Return the generator to use for checkpoints and sample exports."""
+        if getattr(self.config, "sample_from_ema", True) and self.ema_generator is not None:
+            return self.ema_generator
+        return self.generator
+
+    def _apply_ada_lite(self, batch: torch.Tensor, update_probability: bool = False) -> torch.Tensor:
+        """Apply lightweight discriminator-side augmentations."""
+        if getattr(self.config, "augment", "none") != "ada-lite" or self.augment_p <= 0:
+            return batch
+
+        augmented = batch
+        if torch.rand(1, device=batch.device).item() < self.augment_p:
+            if torch.rand(1, device=batch.device).item() < 0.5:
+                augmented = torch.flip(augmented, dims=[2])
+            if torch.rand(1, device=batch.device).item() < 0.5:
+                augmented = torch.flip(augmented, dims=[3])
+            if torch.rand(1, device=batch.device).item() < 0.5:
+                augmented = torch.flip(augmented, dims=[4])
+            if torch.rand(1, device=batch.device).item() < 0.5:
+                k = int(torch.randint(1, 4, (1,), device=batch.device).item())
+                augmented = torch.rot90(augmented, k=k, dims=(3, 4))
+            if torch.rand(1, device=batch.device).item() < 0.3:
+                augmented = augmented + torch.randn_like(augmented) * 0.01
+
+        if update_probability:
+            self.augment_p = float(np.clip(self.augment_p, 0.0, 0.8))
+
+        return augmented
+
+    def _update_augment_probability(self, real_logits: torch.Tensor):
+        """Heuristic ADA-lite probability controller."""
+        if getattr(self.config, "augment", "none") != "ada-lite":
+            return
+
+        target = getattr(self.config, "augment_target", 0.6)
+        adjust = np.sign((real_logits > 0).float().mean().item() - target) * (real_logits.shape[0] / 1000.0)
+        self.augment_p = float(np.clip(self.augment_p + adjust, 0.0, 0.8))
+
+    def _compute_r1_penalty(self, real_samples: torch.Tensor) -> torch.Tensor:
+        """Compute StyleGAN-style R1 penalty on real samples."""
+        real_samples = real_samples.detach().requires_grad_(True)
+        real_logits = self.discriminator(self._apply_ada_lite(real_samples))
+        gradients = torch.autograd.grad(
+            outputs=real_logits.sum(),
+            inputs=real_samples,
+            create_graph=True,
+        )[0]
+        return gradients.square().reshape(gradients.shape[0], -1).sum(dim=1).mean()
+
+    def _gradient_norm(self, parameters) -> float:
+        total_norm_sq = 0.0
+        for param in parameters:
+            if param.grad is None:
+                continue
+            total_norm_sq += float(param.grad.detach().norm(2).item() ** 2)
+        return total_norm_sq ** 0.5
+
+    def _check_step_health(self, metrics: Dict[str, float]):
+        """Emit warnings on obvious collapse or non-finite states."""
+        values = [value for value in metrics.values() if isinstance(value, (int, float))]
+        if any(not np.isfinite(value) for value in values):
+            self.nan_events += 1
+            self.logger.warning("Non-finite GAN metrics detected; run may be unstable")
+            if getattr(self.config, "nan_guard", True):
+                raise RuntimeError("Non-finite GAN metrics detected")
+
+        if metrics.get("disc_loss", 1.0) < 1e-3 or metrics.get("fake_occupancy", 0.5) < 1e-4 or metrics.get("fake_occupancy", 0.5) > 0.9999:
+            self.collapse_events += 1
+            if self.collapse_events >= 3:
+                self.logger.warning(
+                    "Potential GAN collapse detected: disc_loss=%.6f fake_occupancy=%.6f",
+                    metrics.get("disc_loss", 0.0),
+                    metrics.get("fake_occupancy", 0.0),
+                )
+        else:
+            self.collapse_events = 0
     
     def adversarial_loss(self, output: torch.Tensor, target_is_real: bool) -> torch.Tensor:
         """
@@ -227,26 +320,71 @@ class GANTrainer(BaseTrainer):
         Returns:
             Dictionary of step metrics
         """
+        real_data = real_data.float()
         batch_size = real_data.size(0)
-        
-        # Generate noise
+        autocast_enabled = self.config.mixed_precision and self.device != "cpu"
+        r1_penalty_value = 0.0
+
+        self.disc_optimizer.zero_grad(set_to_none=True)
         noise = torch.randn(batch_size, self.noise_dim, device=self.device)
-        
-        # Use training loop for the actual training step
-        step_metrics = self.training_loop.train_step(
-            real_data=real_data,
-            noise=noise,
-            gen_optimizer=self.gen_optimizer,
-            disc_optimizer=self.disc_optimizer,
-            gen_scaler=self.scaler,
-            disc_scaler=self.disc_scaler,
-            mixed_precision=self.config.mixed_precision,
-            gradient_clip=self.config.gradient_clip
-        )
-        
-        # Update metrics tracker
+        with torch.autocast(device_type=self.device, enabled=autocast_enabled):
+            fake_for_disc = self.generator(noise).detach()
+            real_logits = self.discriminator(self._apply_ada_lite(real_data))
+            fake_logits = self.discriminator(self._apply_ada_lite(fake_for_disc))
+            disc_real_loss = F.softplus(-real_logits).mean()
+            disc_fake_loss = F.softplus(fake_logits).mean()
+            disc_loss = disc_real_loss + disc_fake_loss
+
+        disc_loss.backward()
+        if self.config.gradient_clip > 0:
+            torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.config.gradient_clip)
+        disc_grad_norm = self._gradient_norm(self.discriminator.parameters())
+        self.disc_optimizer.step()
+
+        if self.global_step % max(1, getattr(self.config, "r1_interval", 16)) == 0:
+            self.disc_optimizer.zero_grad(set_to_none=True)
+            r1_penalty = self._compute_r1_penalty(real_data)
+            r1_penalty_value = float(r1_penalty.item())
+            r1_loss = 0.5 * getattr(self.config, "r1_gamma", 10.0) * r1_penalty * max(1, getattr(self.config, "r1_interval", 16))
+            r1_loss.backward()
+            if self.config.gradient_clip > 0:
+                torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.config.gradient_clip)
+            self.disc_optimizer.step()
+
+        self.gen_optimizer.zero_grad(set_to_none=True)
+        noise = torch.randn(batch_size, self.noise_dim, device=self.device)
+        with torch.autocast(device_type=self.device, enabled=autocast_enabled):
+            fake_for_gen = self.generator(noise)
+            gen_logits = self.discriminator(self._apply_ada_lite(fake_for_gen))
+            gen_loss = F.softplus(-gen_logits).mean()
+
+        gen_loss.backward()
+        if self.config.gradient_clip > 0:
+            torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.config.gradient_clip)
+        gen_grad_norm = self._gradient_norm(self.generator.parameters())
+        self.gen_optimizer.step()
+
+        self._update_ema_generator()
+        self._update_augment_probability(real_logits.detach())
+
+        step_metrics = {
+            "loss": float(gen_loss.item()),
+            "gen_loss": float(gen_loss.item()),
+            "disc_loss": float(disc_loss.item()),
+            "disc_real_loss": float(disc_real_loss.item()),
+            "disc_fake_loss": float(disc_fake_loss.item()),
+            "disc_real_acc": float((real_logits.detach() > 0).float().mean().item()),
+            "disc_fake_acc": float((fake_logits.detach() < 0).float().mean().item()),
+            "gradient_penalty": 0.0,
+            "r1_penalty": r1_penalty_value,
+            "augment_p": float(self.augment_p),
+            "fake_occupancy": float((fake_for_gen.detach() > 0).float().mean().item()),
+            "gen_grad_norm": gen_grad_norm,
+            "disc_grad_norm": disc_grad_norm,
+        }
+
         self.metrics_tracker.update_step_metrics(step_metrics)
-        
+        self._check_step_health(step_metrics)
         return step_metrics
     
     def train_epoch(self, dataloader: DataLoader) -> Dict[str, float]:
@@ -267,7 +405,14 @@ class GANTrainer(BaseTrainer):
             'disc_loss': [],
             'disc_real_acc': [],
             'disc_fake_acc': [],
-            'gradient_penalty': []
+            'gradient_penalty': [],
+            'disc_real_loss': [],
+            'disc_fake_loss': [],
+            'r1_penalty': [],
+            'augment_p': [],
+            'fake_occupancy': [],
+            'gen_grad_norm': [],
+            'disc_grad_norm': [],
         }
         
         for batch_idx, batch in enumerate(dataloader):
@@ -325,7 +470,10 @@ class GANTrainer(BaseTrainer):
                 self.logger.info(
                     f"Epoch {self.current_epoch}, Batch {batch_idx}: "
                     f"Gen Loss: {step_metrics.get('gen_loss', 0):.4f}, "
-                    f"Disc Loss: {step_metrics.get('disc_loss', 0):.4f}"
+                    f"Disc Loss: {step_metrics.get('disc_loss', 0):.4f}, "
+                    f"R1: {step_metrics.get('r1_penalty', 0):.4f}, "
+                    f"AugP: {step_metrics.get('augment_p', 0):.3f}, "
+                    f"Occ: {step_metrics.get('fake_occupancy', 0):.4f}"
                 )
             
             self.global_step += 1
@@ -433,7 +581,8 @@ class GANTrainer(BaseTrainer):
         Returns:
             Generated samples
         """
-        self.generator.eval()
+        generator = self._generator_for_sampling()
+        generator.eval()
         
         with torch.no_grad():
             if use_fixed_noise and num_samples <= len(self.fixed_noise):
@@ -441,7 +590,7 @@ class GANTrainer(BaseTrainer):
             else:
                 noise = torch.randn(num_samples, self.noise_dim, device=self.device)
             
-            samples = self.generator(noise)
+            samples = generator(noise)
         
         return samples
     
@@ -461,6 +610,7 @@ class GANTrainer(BaseTrainer):
             'epoch': epoch,
             'global_step': self.global_step,
             'generator_state_dict': self.generator.state_dict(),
+            'ema_generator_state_dict': self.ema_generator.state_dict() if self.ema_generator is not None else None,
             'discriminator_state_dict': self.discriminator.state_dict(),
             'gen_optimizer_state_dict': self.gen_optimizer.state_dict(),
             'disc_optimizer_state_dict': self.disc_optimizer.state_dict(),
@@ -505,6 +655,8 @@ class GANTrainer(BaseTrainer):
         checkpoint = torch.load(path, map_location=self.device)
         
         self.generator.load_state_dict(checkpoint['generator_state_dict'])
+        if self.ema_generator is not None and checkpoint.get('ema_generator_state_dict') is not None:
+            self.ema_generator.load_state_dict(checkpoint['ema_generator_state_dict'])
         self.discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
         self.gen_optimizer.load_state_dict(checkpoint['gen_optimizer_state_dict'])
         self.disc_optimizer.load_state_dict(checkpoint['disc_optimizer_state_dict'])
@@ -545,5 +697,8 @@ class GANTrainer(BaseTrainer):
             "noise_dim": self.noise_dim,
             "generator_params": sum(p.numel() for p in self.generator.parameters()),
             "discriminator_params": sum(p.numel() for p in self.discriminator.parameters()),
+            "augment": getattr(self.config, "augment", "none"),
+            "augment_p": self.augment_p,
+            "use_ema": self.ema_generator is not None,
         })
         return info

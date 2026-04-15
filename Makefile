@@ -9,10 +9,24 @@ EPOCHS ?= 10
 BATCH_SIZE ?= 4
 VOID_DIM ?= 32
 NOISE_DIM ?= 100
+TIMESTEPS ?= 100
+LEARNING_RATE ?= 1e-4
+WEIGHT_DECAY ?= 0.01
+NOISE_SCHEDULE ?= cosine
+BETA_START ?= 0.0001
+BETA_END ?= 0.02
 NUM_INFERENCE_SAMPLES ?= 4
+NUM_INFERENCE_STEPS ?= 50
 NUM_WORKERS ?= 0
+DISCRIMINATOR_TYPE ?= spectral_norm
+R1_GAMMA ?= 10.0
+R1_INTERVAL ?= 16
+GAN_AUGMENT ?= ada-lite
+GAN_AUGMENT_P ?= 0.0
+GAN_AUGMENT_TARGET ?= 0.6
+EMA_DECAY ?= 0.999
 
-.PHONY: colab-train-mono
+.PHONY: colab-train-mono colab-train-diffusion
 
 colab-train-mono:
 	python scripts/colab_train.py \
@@ -24,7 +38,33 @@ colab-train-mono:
 		--void-dim "$(VOID_DIM)" \
 		--noise-dim "$(NOISE_DIM)" \
 		--num-inference-samples "$(NUM_INFERENCE_SAMPLES)" \
-		--num-workers "$(NUM_WORKERS)"
+		--num-workers "$(NUM_WORKERS)" \
+		--discriminator-type "$(DISCRIMINATOR_TYPE)" \
+		--r1-gamma "$(R1_GAMMA)" \
+		--r1-interval "$(R1_INTERVAL)" \
+		--augment "$(GAN_AUGMENT)" \
+		--augment-p "$(GAN_AUGMENT_P)" \
+		--augment-target "$(GAN_AUGMENT_TARGET)" \
+		--ema-decay "$(EMA_DECAY)"
+
+colab-train-diffusion:
+	python scripts/colab_train_diffusion.py \
+		--data-output "$(DATA_OUT)" \
+		--run-output "$(RUN_OUT)" \
+		--num-samples "$(NUM_SAMPLES)" \
+		--epochs "$(EPOCHS)" \
+		--batch-size "$(BATCH_SIZE)" \
+		--void-dim "$(VOID_DIM)" \
+		--timesteps "$(TIMESTEPS)" \
+		--learning-rate "$(LEARNING_RATE)" \
+		--weight-decay "$(WEIGHT_DECAY)" \
+		--noise-schedule "$(NOISE_SCHEDULE)" \
+		--beta-start "$(BETA_START)" \
+		--beta-end "$(BETA_END)" \
+		--num-inference-samples "$(NUM_INFERENCE_SAMPLES)" \
+		--num-inference-steps "$(NUM_INFERENCE_STEPS)" \
+		--num-workers "$(NUM_WORKERS)" \
+		--ema-decay "$(EMA_DECAY)"
 
 # ----------------------------------
 #          INSTALL & TEST

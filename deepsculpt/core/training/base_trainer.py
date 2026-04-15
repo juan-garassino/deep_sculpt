@@ -59,6 +59,15 @@ class TrainingConfig:
     gradient_clip: float = 1.0
     progressive_growing: bool = False
     curriculum_learning: bool = False
+    use_ema: bool = True
+    ema_decay: float = 0.999
+    r1_gamma: float = 10.0
+    r1_interval: int = 16
+    augment: str = "none"
+    augment_p: float = 0.0
+    augment_target: float = 0.6
+    sample_from_ema: bool = True
+    nan_guard: bool = True
     
     # Distributed training
     distributed: bool = False
@@ -283,8 +292,8 @@ class BaseTrainer(ABC):
             epoch_time = time.time() - epoch_start_time
             
             # Update metrics
-            training_history['train_loss'].append(train_metrics.get('loss', train_metrics.get('train_loss', 0)))
-            training_history['val_loss'].append(val_metrics.get('loss', val_metrics.get('val_loss', 0)))
+            training_history['train_loss'].append(self._resolve_primary_loss(train_metrics))
+            training_history['val_loss'].append(self._resolve_primary_loss(val_metrics) if val_metrics else 0)
             training_history['epoch_times'].append(epoch_time)
             training_history['learning_rates'].append(self.optimizer.param_groups[0]['lr'])
             
@@ -298,8 +307,8 @@ class BaseTrainer(ABC):
             self.log_metrics(epoch_metrics, epoch, "epoch")
             
             # Log to console
-            train_loss = train_metrics.get('loss', train_metrics.get('train_loss', 0))
-            val_loss = val_metrics.get('loss', val_metrics.get('val_loss', 0)) if val_metrics else 0
+            train_loss = self._resolve_primary_loss(train_metrics)
+            val_loss = self._resolve_primary_loss(val_metrics) if val_metrics else 0
             self.logger.info(
                 f"Epoch {epoch + 1}/{self.config.epochs} completed in {epoch_time:.2f}s - "
                 f"Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}"
@@ -329,6 +338,18 @@ class BaseTrainer(ABC):
         
         self.logger.info("Training completed")
         return training_history
+
+    def _resolve_primary_loss(self, metrics: Optional[Dict[str, Any]]) -> float:
+        """Resolve a primary loss value for logging/history across trainer types."""
+        if not metrics:
+            return 0.0
+
+        for key in ("loss", "train_loss", "gen_loss", "diffusion_loss", "val_loss"):
+            value = metrics.get(key)
+            if isinstance(value, (int, float)):
+                return float(value)
+
+        return 0.0
     
     def save_checkpoint(self, path: str, epoch: int, metrics: Dict[str, float], is_best: bool = False):
         """
