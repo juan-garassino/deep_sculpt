@@ -8,9 +8,24 @@ import sys
 from pathlib import Path
 
 
-def run_command(cmd, cwd: Path) -> None:
+def build_env(repo_root: Path, mpl_config_dir: Path) -> dict:
+    env = os.environ.copy()
+    pythonpath_parts = [
+        str(repo_root),
+        str(repo_root / "deepsculpt"),
+    ]
+    existing_pythonpath = env.get("PYTHONPATH")
+    if existing_pythonpath:
+        pythonpath_parts.append(existing_pythonpath)
+
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+    env.setdefault("MPLCONFIGDIR", str(mpl_config_dir))
+    return env
+
+
+def run_command(cmd, cwd: Path, env: dict) -> None:
     print("$", " ".join(str(part) for part in cmd))
-    subprocess.run(cmd, cwd=cwd, check=True)
+    subprocess.run(cmd, cwd=cwd, env=env, check=True)
 
 
 def find_latest_run(run_output: Path) -> Path:
@@ -51,7 +66,7 @@ def main() -> int:
     run_output.mkdir(parents=True, exist_ok=True)
     mpl_config_dir = run_output / ".mplconfig"
     mpl_config_dir.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("MPLCONFIGDIR", str(mpl_config_dir))
+    env = build_env(repo_root, mpl_config_dir)
 
     global_flags = []
     if args.cpu:
@@ -68,7 +83,7 @@ def main() -> int:
         f"--void-dim={args.void_dim}",
         f"--output-dir={data_output}",
     ]
-    run_command(generate_cmd, repo_root)
+    run_command(generate_cmd, repo_root, env)
 
     train_cmd = [
         *base_cmd,
@@ -86,7 +101,7 @@ def main() -> int:
     ]
     if not args.cpu:
         train_cmd.append("--mixed-precision")
-    run_command(train_cmd, repo_root)
+    run_command(train_cmd, repo_root, env)
 
     latest_run = find_latest_run(run_output)
     checkpoint = latest_run / "generator_final.pt"
@@ -100,7 +115,7 @@ def main() -> int:
         f"--output-dir={inference_output}",
         "--visualize",
     ]
-    run_command(sample_cmd, repo_root)
+    run_command(sample_cmd, repo_root, env)
 
     print(f"Training data saved under: {data_output}")
     print(f"Run artifacts saved under: {latest_run}")
