@@ -237,8 +237,10 @@ class GANTrainer(BaseTrainer):
         target = self._occupancy_target(real_occupancy)
         occupancy_gap = fake_occupancy - target
         floor = float(getattr(self.config, "occupancy_floor", 0.01))
-        floor_penalty = F.relu(fake_occupancy.new_tensor(floor) - fake_occupancy)
-        penalty = occupancy_gap.square() + floor_penalty.square()
+        floor_deficit = F.relu(fake_occupancy.new_tensor(floor) - fake_occupancy)
+        # Use abs (not square) so the gradient stays proportional to the gap,
+        # plus a strong linear floor term to kick the generator out of empty collapse.
+        penalty = occupancy_gap.abs() + 5.0 * floor_deficit
         return penalty, fake_occupancy
 
     def _check_step_health(self, metrics: Dict[str, float]):
