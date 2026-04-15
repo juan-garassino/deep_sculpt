@@ -35,7 +35,7 @@ OCCUPANCY_FLOOR ?= 0.01
 OCCUPANCY_TARGET_MODE ?= batch_real
 EMA_DECAY ?= 0.999
 
-.PHONY: colab-train-mono colab-train-diffusion
+.PHONY: colab-train-mono colab-train-diffusion autoresearch-build
 
 colab-train-mono:
 	python scripts/colab_train.py \
@@ -84,6 +84,9 @@ colab-train-diffusion:
 		--guidance-scale "$(GUIDANCE_SCALE)" \
 		--num-workers "$(NUM_WORKERS)" \
 		--ema-decay "$(EMA_DECAY)"
+
+autoresearch-build:
+	docker build -f autoresearch/Dockerfile -t deepsculpt-autoresearch .
 
 # ----------------------------------
 #          INSTALL & TEST

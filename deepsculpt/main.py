@@ -488,6 +488,43 @@ class DeepSculptV2Main:
                 'color': color_mode,
             }
         }, results_dir / "diffusion_final.pt")
+
+        with open(results_dir / "config.json", "w") as f:
+            json.dump(
+                {
+                    "model_type": args.model_type,
+                    "void_dim": args.void_dim,
+                    "timesteps": args.timesteps,
+                    "noise_schedule": args.noise_schedule,
+                    "beta_start": args.beta_start,
+                    "beta_end": args.beta_end,
+                    "sparse": args.sparse,
+                    "color_mode": color_mode,
+                    "use_ema": args.use_ema,
+                    "training_params": {
+                        "epochs": args.epochs,
+                        "batch_size": args.batch_size,
+                        "learning_rate": args.learning_rate,
+                        "weight_decay": args.weight_decay,
+                        "num_workers": args.num_workers,
+                    },
+                },
+                f,
+                indent=2,
+            )
+
+        with open(results_dir / "run_summary.json", "w") as f:
+            json.dump(
+                {
+                    "train_history": metrics,
+                    "last_epoch_metrics": getattr(trainer, "last_epoch_metrics", {}),
+                    "training_info": trainer.get_training_info(),
+                    "dataset_path": str(collection_dir) if collection_dir is not None else None,
+                    "dataset_occupancy_stats": occupancy_stats,
+                },
+                f,
+                indent=2,
+            )
         
         print(f"Diffusion training completed! Results saved to {results_dir}")
         return 0

@@ -106,6 +106,7 @@ class DiffusionTrainer(BaseTrainer):
         
         # Initialize metrics tracker
         self.metrics_tracker = TrainingMetrics()
+        self.last_epoch_metrics: Dict[str, float] = {}
         
         self.logger.info(f"Diffusion trainer initialized with {prediction_type} prediction")
     
@@ -412,6 +413,7 @@ class DiffusionTrainer(BaseTrainer):
         
         # Update metrics tracker
         self.metrics_tracker.update_epoch_metrics(avg_metrics)
+        self.last_epoch_metrics = avg_metrics
         
         return avg_metrics
     
@@ -612,5 +614,6 @@ class DiffusionTrainer(BaseTrainer):
             "loss_type": self.loss_type,
             "noise_scheduler_type": self.noise_scheduler.__class__.__name__,
             "timesteps": self.noise_scheduler.timesteps,
+            "last_epoch_metrics": self.last_epoch_metrics,
         })
         return info
