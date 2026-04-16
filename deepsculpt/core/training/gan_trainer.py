@@ -314,7 +314,9 @@ class GANTrainer(BaseTrainer):
         self._ema_disc_loss = ema_beta * self._ema_disc_loss + (1 - ema_beta) * disc_loss
         if self._ema_disc_loss < 0.05:
             disc_penalty = 1.0 - (self._ema_disc_loss / 0.05)  # 0→1 as loss→0
-            self._occupancy_health *= (1.0 - 0.5 * disc_penalty)
+            self._occupancy_health *= (1.0 - 0.2 * disc_penalty)
+            # Disc dominance alone shouldn't trigger full collapse response
+            self._occupancy_health = max(self._occupancy_health, 0.3)
 
         h = self._occupancy_health  # shorthand
 
