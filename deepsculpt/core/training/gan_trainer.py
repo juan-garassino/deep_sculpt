@@ -655,8 +655,9 @@ class GANTrainer(BaseTrainer):
                 if key in epoch_metrics:
                     epoch_metrics[key].append(value)
             
-            # Log step metrics
-            if batch_idx % self.config.log_freq == 0:
+            # Log step metrics (every N batches + always the last batch)
+            is_last_batch = (batch_idx == len(dataloader) - 1)
+            if batch_idx % self.config.log_freq == 0 or is_last_batch:
                 self.log_metrics(step_metrics, self.global_step, "train_step")
                 self.logger.info(
                     f"Epoch {self.current_epoch}, Batch {batch_idx}: "
@@ -668,9 +669,9 @@ class GANTrainer(BaseTrainer):
                     f"GenSteps: {step_metrics.get('adaptive_gen_steps', 1):.0f}, "
                     f"DScale: {step_metrics.get('disc_lr_scale', 1):.2f}"
                 )
-            
+
             self.global_step += 1
-        
+
         # Calculate epoch averages
         avg_metrics = {key: np.mean(values) for key, values in epoch_metrics.items() if values}
         

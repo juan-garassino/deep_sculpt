@@ -430,3 +430,31 @@ class PatchDiscriminator(BaseDiscriminator):
         x = self.conv5(x)
 
         return x
+
+
+class LightDiscriminator(BaseDiscriminator):
+    """Lightweight discriminator for 3D sparse voxel GANs.
+
+    Deliberately small (3 conv layers, ~500K params) to balance against a
+    stronger generator. Uses spectral norm for stability, adaptive pooling
+    for void_dim independence.
+    """
+
+    def __init__(self, void_dim: int = 64, color_mode: int = 1, sparse: bool = False):
+        super().__init__(void_dim, color_mode, sparse)
+        Conv = SparseConv3d if sparse else nn.Conv3d
+        ch = 32
+        self.net = nn.Sequential(
+            nn.utils.spectral_norm(Conv(self.input_channels, ch, 4, 2, 1)),
+            nn.LeakyReLU(0.2),
+            nn.utils.spectral_norm(Conv(ch, ch * 2, 4, 2, 1)),
+            nn.LeakyReLU(0.2),
+            nn.utils.spectral_norm(Conv(ch * 2, ch * 4, 4, 2, 1)),
+            nn.LeakyReLU(0.2),
+            nn.AdaptiveAvgPool3d(1),
+            nn.Flatten(),
+            nn.utils.spectral_norm(nn.Linear(ch * 4, 1)),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)

@@ -221,12 +221,16 @@ class DeepSculptV2Main:
         model_factory = PyTorchModelFactoryV2()
         
         # Create models
+        gen_kwargs = {}
+        if getattr(args, 'gen_channels', None) is not None:
+            gen_kwargs['gen_channels'] = args.gen_channels
         generator = model_factory.create_gan_generator(
             model_type=args.model_type,
             void_dim=args.void_dim,
             noise_dim=args.noise_dim,
             color_mode=0,  # Use monochrome mode for single channel
-            sparse=args.sparse
+            sparse=args.sparse,
+            **gen_kwargs
         ).to(self.device)
         
         discriminator = model_factory.create_gan_discriminator(
@@ -1112,9 +1116,10 @@ def create_parser():
     train_gan_parser.add_argument('--sparse', action='store_true', help='Use sparse tensors')
     train_gan_parser.add_argument('--mixed-precision', action='store_true', help='Use mixed precision training')
     train_gan_parser.add_argument('--gradient-clip', type=float, default=1.0, help='Gradient clipping value')
-    train_gan_parser.add_argument('--discriminator-type', default='spectral_norm',
-                                 choices=['simple', 'complex', 'progressive', 'conditional', 'spectral_norm', 'multi_scale', 'patch'],
+    train_gan_parser.add_argument('--discriminator-type', default='light',
+                                 choices=['simple', 'complex', 'progressive', 'conditional', 'spectral_norm', 'multi_scale', 'patch', 'light'],
                                  help='Type of discriminator to train against')
+    train_gan_parser.add_argument('--gen-channels', type=int, default=None, help='Generator base channel width (default: noise_dim)')
     train_gan_parser.add_argument('--scheduler', action='store_true', help='Use learning rate scheduler')
     train_gan_parser.add_argument('--scheduler-step', type=int, default=30, help='Scheduler step size')
     train_gan_parser.add_argument('--scheduler-gamma', type=float, default=0.1, help='Scheduler gamma')

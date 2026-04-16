@@ -15,6 +15,38 @@ import math
 from ..base_models import BaseGenerator, SparseConv3d, SparseConvTranspose3d, SparseBatchNorm3d
 
 
+class SelfAttention3D(nn.Module):
+    """Multi-head self-attention for 3D feature maps.
+
+    Applied at mid-resolution in the generator so every voxel can attend
+    to every other voxel — lets the network coordinate global structure
+    (floors, walls, columns) instead of just local 3×3×3 patterns.
+    """
+
+    def __init__(self, channels: int, num_heads: int = 4):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = channels // num_heads
+        self.norm = nn.GroupNorm(min(8, channels), channels)
+        self.qkv = nn.Conv3d(channels, channels * 3, 1)
+        self.proj = nn.Conv3d(channels, channels, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, C, D, H, W = x.shape
+        S = D * H * W  # spatial tokens
+
+        h = self.norm(x)
+        qkv = self.qkv(h).reshape(B, 3, self.num_heads, self.head_dim, S)
+        q, k, v = qkv[:, 0], qkv[:, 1], qkv[:, 2]
+
+        # Scaled dot-product attention
+        attn = (q.transpose(-1, -2) @ k) * (self.head_dim ** -0.5)
+        attn = attn.softmax(dim=-1)
+        out = (v @ attn.transpose(-1, -2)).reshape(B, C, D, H, W)
+
+        return x + self.proj(out)  # residual connection
+
+
 class SimpleGenerator(BaseGenerator):
     """Simple generator model equivalent to TensorFlow version."""
     
@@ -180,76 +212,84 @@ def straight_through_binarize(x: torch.Tensor) -> torch.Tensor:
 
 
 class SkipGenerator(BaseGenerator):
-    """Generator with skip connections for sparse 3D voxel generation.
+    """Generator with skip connections and self-attention for sparse 3D voxel generation.
 
-    Architecture fixes vs the original:
-    - Proper skip connections: early layers feed into later layers (not
-      self-concatenation which just doubles channels without information).
-    - Final conv has a bias initialized so sigmoid(bias) ≈ target occupancy
-      (~5%), preventing the 50% → 0% collapse trajectory.
-    - Straight-through binarization: output is {0,1} like real data so the
-      discriminator cannot use "continuous vs binary" as a shortcut.
+    Designed for the 3D sparse voxel problem where the generator needs much
+    more capacity than the discriminator. Features:
+    - Configurable channel width via gen_channels (default: noise_dim)
+    - Self-attention at mid-resolution for global structure coordination
+    - Multi-scale skip connections for gradient flow
+    - STE binarization for monochrome mode
     """
 
-    def __init__(self, void_dim: int = 64, noise_dim: int = 100, color_mode: int = 1, sparse: bool = False):
+    def __init__(self, void_dim: int = 64, noise_dim: int = 100, color_mode: int = 1,
+                 sparse: bool = False, gen_channels: Optional[int] = None):
         super().__init__(void_dim, noise_dim, color_mode, sparse)
 
+        ch = gen_channels or noise_dim  # backwards compatible
+        self.gen_channels = ch
         self.initial_size = void_dim // 8
 
         ConvTranspose = SparseConvTranspose3d if sparse else nn.ConvTranspose3d
         BatchNorm = SparseBatchNorm3d if sparse else nn.BatchNorm3d
 
-        # Encoder-like path (builds features at each scale)
-        self.fc = nn.Linear(noise_dim, self.initial_size ** 3 * noise_dim, bias=False)
-        self.bn1 = nn.BatchNorm1d(self.initial_size ** 3 * noise_dim)
+        # Dense projection from noise to spatial features
+        self.fc = nn.Linear(noise_dim, self.initial_size ** 3 * ch, bias=False)
+        self.bn1 = nn.BatchNorm1d(self.initial_size ** 3 * ch)
 
-        self.conv1 = ConvTranspose(noise_dim, noise_dim, 3, 1, 1, bias=False)
-        self.bn2 = BatchNorm(noise_dim)
+        self.conv1 = ConvTranspose(ch, ch, 3, 1, 1, bias=False)
+        self.bn2 = BatchNorm(ch)
 
-        # Skip connections: conv1 output (noise_dim ch) feeds into conv3 input
-        # conv2 output (noise_dim//2 ch) feeds into conv4 input
-        self.conv2 = ConvTranspose(noise_dim, noise_dim // 2, 3, 2, 1, 1, bias=False)
-        self.bn3 = BatchNorm(noise_dim // 2)
+        self.conv2 = ConvTranspose(ch, ch // 2, 3, 2, 1, 1, bias=False)
+        self.bn3 = BatchNorm(ch // 2)
 
-        self.conv3 = ConvTranspose(noise_dim // 2 + noise_dim, noise_dim // 4, 3, 2, 1, 1, bias=False)
-        self.bn4 = BatchNorm(noise_dim // 4)
+        # Self-attention at mid-resolution (8^3 for void_dim=64, 16^3 for void_dim=128)
+        self.attn = SelfAttention3D(ch // 2, num_heads=4)
 
-        # bias=True so we can init to produce ~5% occupancy
-        self.conv4 = ConvTranspose(noise_dim // 4 + noise_dim // 2, self.output_channels, 3, 2, 1, 1, bias=True)
+        # Skip: s1 (ch channels) upsampled and concatenated
+        self.conv3 = ConvTranspose(ch // 2 + ch, ch // 4, 3, 2, 1, 1, bias=False)
+        self.bn4 = BatchNorm(ch // 4)
 
-        # Init final bias so sigmoid(bias) ≈ 0.05 → bias ≈ log(0.05/0.95) ≈ -2.94
-        # Only for monochrome mode; OHE/RGB use default zero init
+        # Skip: s2 (ch//2 channels) upsampled and concatenated
+        self.conv4 = ConvTranspose(ch // 4 + ch // 2, self.output_channels, 3, 2, 1, 1, bias=True)
+
+        # Init final bias so sigmoid(bias) ≈ 0.05 for monochrome
         if self.color_mode == 0:
             nn.init.constant_(self.conv4.bias, -2.94)
 
         self.relu = nn.ReLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        ch = self.gen_channels
+
         x = self.fc(x)
         x = self.bn1(x)
         x = self.relu(x)
-        x = x.view(-1, self.noise_dim, self.initial_size, self.initial_size, self.initial_size)
+        x = x.view(-1, ch, self.initial_size, self.initial_size, self.initial_size)
 
-        # Scale 1: 4×4×4 (or initial_size)
+        # Scale 1: initial_size (e.g. 4×4×4)
         s1 = self.conv1(x)
         s1 = self.bn2(s1)
-        s1 = self.relu(s1)  # (B, noise_dim, 4, 4, 4)
+        s1 = self.relu(s1)  # (B, ch, 4, 4, 4)
 
-        # Scale 2: 8×8×8
+        # Scale 2: 2× up (e.g. 8×8×8)
         s2 = self.conv2(s1)
         s2 = self.bn3(s2)
-        s2 = self.relu(s2)  # (B, noise_dim//2, 8, 8, 8)
+        s2 = self.relu(s2)  # (B, ch//2, 8, 8, 8)
 
-        # Scale 3: 16×16×16 — skip from s1 (upsampled to match)
+        # Self-attention: every voxel attends to every other at this resolution
+        s2 = self.attn(s2)
+
+        # Scale 3: 2× up — skip from s1 (upsampled to match)
         s1_up = F.interpolate(s1, scale_factor=2, mode='trilinear', align_corners=False)
-        x3 = torch.cat([s2, s1_up], dim=1)  # (B, noise_dim//2 + noise_dim, 8, 8, 8)
+        x3 = torch.cat([s2, s1_up], dim=1)  # (B, ch//2 + ch, 8, 8, 8)
         s3 = self.conv3(x3)
         s3 = self.bn4(s3)
-        s3 = self.relu(s3)  # (B, noise_dim//4, 16, 16, 16)
+        s3 = self.relu(s3)  # (B, ch//4, 16, 16, 16)
 
-        # Scale 4: 32×32×32 — skip from s2 (upsampled to match)
+        # Scale 4: 2× up — skip from s2 (upsampled to match)
         s2_up = F.interpolate(s2, scale_factor=2, mode='trilinear', align_corners=False)
-        x4 = torch.cat([s3, s2_up], dim=1)  # (B, noise_dim//4 + noise_dim//2, 16, 16, 16)
+        x4 = torch.cat([s3, s2_up], dim=1)  # (B, ch//4 + ch//2, 16, 16, 16)
         logits = self.conv4(x4)  # (B, output_channels, 32, 32, 32)
 
         if self.color_mode == 1 and self.output_channels >= 6:

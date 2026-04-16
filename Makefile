@@ -24,7 +24,8 @@ NUM_INFERENCE_STEPS ?= 50
 DIFFUSION_SAMPLER ?= ddim
 GUIDANCE_SCALE ?= 1.0
 NUM_WORKERS ?= 0
-DISCRIMINATOR_TYPE ?= spectral_norm
+DISCRIMINATOR_TYPE ?= light
+GEN_CHANNELS ?= 256
 R1_GAMMA ?= 10.0
 R1_INTERVAL ?= 16
 GAN_AUGMENT ?= none
@@ -97,7 +98,8 @@ colab-train-mono:
 		--occupancy-floor "$(OCCUPANCY_FLOOR)" \
 		--occupancy-target-mode "$(OCCUPANCY_TARGET_MODE)" \
 		--ema-decay "$(EMA_DECAY)" \
-		--ttur-ratio "$(TTUR_RATIO)"
+		--ttur-ratio "$(TTUR_RATIO)" \
+		--gen-channels "$(GEN_CHANNELS)"
 
 colab-train-color:
 	python scripts/colab_train.py \
@@ -125,6 +127,7 @@ colab-train-color:
 		--occupancy-target-mode "$(OCCUPANCY_TARGET_MODE)" \
 		--ema-decay "$(EMA_DECAY)" \
 		--ttur-ratio "$(TTUR_RATIO)" \
+		--gen-channels "$(GEN_CHANNELS)" \
 		--color
 
 colab-train-diffusion:

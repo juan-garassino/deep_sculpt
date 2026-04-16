@@ -20,7 +20,7 @@ from .gan.generator import (
 from .gan.discriminator import (
     SimpleDiscriminator, ComplexDiscriminator, ProgressiveDiscriminator,
     ConditionalDiscriminator, SpectralNormDiscriminator, MultiScaleDiscriminator,
-    PatchDiscriminator
+    PatchDiscriminator, LightDiscriminator
 )
 from .diffusion.unet import UNet3D, ConditionalUNet3D
 from .diffusion.noise_scheduler import NoiseScheduler, DDIMScheduler, DPMSolverScheduler, AdaptiveScheduler
@@ -54,6 +54,7 @@ class PyTorchModelFactory:
         "spectral_norm": SpectralNormDiscriminator,
         "multi_scale": MultiScaleDiscriminator,
         "patch": PatchDiscriminator,
+        "light": LightDiscriminator,
     }
     
     DIFFUSION_REGISTRY = {

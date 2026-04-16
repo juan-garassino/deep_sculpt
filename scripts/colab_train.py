@@ -91,6 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--occupancy-target-mode", default="batch_real", choices=["batch_real", "dataset_mean"], help="Occupancy target source")
     parser.add_argument("--ema-decay", type=float, default=0.999, help="EMA decay")
     parser.add_argument("--ttur-ratio", type=float, default=0.25, help="TTUR disc/gen LR ratio (lower = weaker disc)")
+    parser.add_argument("--gen-channels", type=int, default=None, help="Generator base channel width (default: noise_dim)")
     parser.add_argument("--color", action="store_true", help="Enable 6-channel OHE color mode")
     parser.add_argument("--mixed-precision", action="store_true", help="Enable mixed precision for GAN training")
     parser.add_argument("--cpu", action="store_true", help="Force CPU mode")
@@ -165,6 +166,8 @@ def main() -> int:
         "--generate-samples",
         "--num-preview-samples=1",
     ]
+    if args.gen_channels is not None:
+        train_cmd.append(f"--gen-channels={args.gen_channels}")
     if args.color:
         train_cmd.append("--color")
     if args.mixed_precision and not args.cpu:
