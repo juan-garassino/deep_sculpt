@@ -592,10 +592,11 @@ class GANTrainer(BaseTrainer):
                 occupancy_penalty, fake_occupancy = self._occupancy_penalty(fake_for_gen, real_occupancy)
                 occupancy_loss = occupancy_penalty * occ_weight
 
-                # Feature matching: match intermediate disc feature statistics
+                # Feature matching: match normalized intermediate disc feature statistics
                 if real_feat_means is not None and fm_weight > 0:
                     _, fake_features = disc_for_gen(fake_for_gen, return_features=True)
-                    fm_loss = sum(F.mse_loss(ff.mean(0), rm)
+                    # Normalize each layer's contribution by its dimensionality
+                    fm_loss = sum(F.mse_loss(ff.mean(0), rm) / (rm.numel() + 1)
                                  for ff, rm in zip(fake_features, real_feat_means))
                     fm_loss_value = float(fm_loss.item())
                 else:
