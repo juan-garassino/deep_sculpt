@@ -240,14 +240,13 @@ class GANTrainer(BaseTrainer):
     def _compute_occupancy(self, batch: torch.Tensor, differentiable: bool = False) -> torch.Tensor:
         """Compute scalar occupancy ratio for a voxel batch.
 
-        When ``differentiable=True`` (used for the generator penalty), uses a
-        soft sigmoid approximation of the 0.5 threshold so gradients flow back
-        to the generator.  When ``False`` (used for real data and logging),
-        uses a hard threshold for accurate measurement.
+        When ``differentiable=True`` (used for the generator penalty), uses
+        ``batch.mean()`` — for sigmoid outputs this correlates with occupancy
+        and has gradient everywhere (unlike sigmoid-of-sigmoid which saturates
+        at 0).  When ``False`` (real data / logging), uses a hard threshold.
         """
         if differentiable:
-            # Soft threshold: sigmoid(10*(x - 0.5)) ≈ step(x - 0.5) but differentiable
-            return torch.sigmoid(10.0 * (batch - 0.5)).mean()
+            return batch.mean()
         return (batch.detach() > 0.5).float().mean()
 
     def _occupancy_target(self, real_occupancy: torch.Tensor) -> torch.Tensor:
