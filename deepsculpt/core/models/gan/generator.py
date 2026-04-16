@@ -88,7 +88,7 @@ class SimpleGenerator(BaseGenerator):
 
         # Final transposed conv block
         x = self.conv4(x)
-        x = torch.sigmoid(x)
+        x = self._apply_final_activation(x)
 
         return x
 
@@ -155,11 +155,11 @@ class ComplexGenerator(BaseGenerator):
         # Final layer with skip connection
         x = torch.cat([x, skip_connections[-1]], dim=1)
         x = self.conv4(x)
-        x = torch.sigmoid(x)
-        
+        x = self._apply_final_activation(x)
+
         # Reshape to final output
         x = x.view(-1, self.void_dim, self.void_dim, self.void_dim, self.output_channels)
-        
+
         return x
 
 
@@ -218,7 +218,9 @@ class SkipGenerator(BaseGenerator):
         self.conv4 = ConvTranspose(noise_dim // 4 + noise_dim // 2, self.output_channels, 3, 2, 1, 1, bias=True)
 
         # Init final bias so sigmoid(bias) ≈ 0.05 → bias ≈ log(0.05/0.95) ≈ -2.94
-        nn.init.constant_(self.conv4.bias, -2.94)
+        # Only for monochrome mode; OHE/RGB use default zero init
+        if self.color_mode == 0:
+            nn.init.constant_(self.conv4.bias, -2.94)
 
         self.relu = nn.ReLU()
 
@@ -250,14 +252,20 @@ class SkipGenerator(BaseGenerator):
         x4 = torch.cat([s3, s2_up], dim=1)  # (B, noise_dim//4 + noise_dim//2, 16, 16, 16)
         logits = self.conv4(x4)  # (B, output_channels, 32, 32, 32)
 
-        # Sigmoid + straight-through binarization: output is {0,1} like real
-        # data. Discriminator sees binary from both sides — no density shortcut.
-        # Gradient flows through sigmoid via straight-through estimator.
-        soft = torch.sigmoid(logits)
-        if self.training:
-            x = straight_through_binarize(soft)
+        if self.color_mode == 1 and self.output_channels >= 6:
+            # OHE: mutually exclusive class selection
+            x = F.softmax(logits, dim=1)
+        elif self.output_channels == 3:
+            # RGB: continuous color in [-1, 1]
+            x = torch.tanh(logits)
         else:
-            x = (soft > 0.5).float()
+            # Monochrome: sigmoid + straight-through binarization — output is
+            # {0,1} like real data. Gradient flows via STE.
+            soft = torch.sigmoid(logits)
+            if self.training:
+                x = straight_through_binarize(soft)
+            else:
+                x = (soft > 0.5).float()
 
         x = x.view(-1, self.output_channels, self.void_dim, self.void_dim, self.void_dim)
         return x
@@ -317,7 +325,7 @@ class MonochromeGenerator(BaseGenerator):
 
         # Final transposed conv block
         x = self.conv4(x)
-        x = torch.sigmoid(x)
+        x = self._apply_final_activation(x)
 
         # Reshape to final output
         x = x.view(-1, self.void_dim, self.void_dim, self.void_dim, self.output_channels)
@@ -342,8 +350,7 @@ class AutoencoderGenerator(BaseGenerator):
         self.conv3 = ConvTranspose(64, self.output_channels, 5, 2, 2, 1)
         
         self.relu = nn.ReLU()
-        self.sigmoid = nn.Sigmoid()
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Dense layer to expand latent dimension
         x = self.fc(x)
@@ -358,7 +365,7 @@ class AutoencoderGenerator(BaseGenerator):
         x = self.relu(x)
         
         x = self.conv3(x)  # 16x16x16 -> 32x32x32
-        x = self.sigmoid(x)
+        x = self._apply_final_activation(x)
         
         # Reshape to match expected format (batch, depth, height, width, channels)
         x = x.permute(0, 2, 3, 4, 1)
@@ -432,9 +439,10 @@ class ProgressiveGenerator(BaseGenerator):
         for i in range(min(self.current_level + 1, len(self.progressive_blocks))):
             x = self.progressive_blocks[i](x)
         
-        # Convert to RGB
+        # Convert to output channels
         x = self.to_rgb(x)
-        
+        x = self._apply_final_activation(x)
+
         return x
     
     def grow(self):
@@ -513,7 +521,7 @@ class ConditionalGenerator(BaseGenerator):
         x = self.relu(x)
 
         x = self.conv4(x)
-        x = torch.sigmoid(x)
+        x = self._apply_final_activation(x)
         
         # Reshape to final output
         x = x.view(-1, self.void_dim, self.void_dim, self.void_dim, self.output_channels)

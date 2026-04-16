@@ -209,8 +209,7 @@ class ProgressiveDiscriminator(BaseDiscriminator):
             nn.LeakyReLU(0.2),
             nn.AdaptiveAvgPool3d(1),
             nn.Flatten(),
-            nn.Linear(in_channels, 1),
-            nn.Sigmoid()
+            nn.Linear(in_channels, 1)
         )
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -271,8 +270,7 @@ class ConditionalDiscriminator(BaseDiscriminator):
         self.fc = nn.Linear(512 * final_size ** 3 + 128, 1)  # +128 for condition embedding
         
         self.leaky_relu = nn.LeakyReLU(0.2)
-        self.sigmoid = nn.Sigmoid()
-    
+
     def forward(self, x: torch.Tensor, condition: Optional[torch.Tensor] = None) -> torch.Tensor:
         # Input is already in PyTorch channels-first format: (batch, channels, depth, height, width)
         
@@ -301,10 +299,9 @@ class ConditionalDiscriminator(BaseDiscriminator):
             condition_embedded = self.condition_embedding(condition)
             x = torch.cat([x, condition_embedded], dim=1)
         
-        # Final classification
+        # Final classification — return logits for softplus loss
         x = self.fc(x)
-        x = self.sigmoid(x)
-        
+
         return x
 
 
@@ -407,13 +404,12 @@ class PatchDiscriminator(BaseDiscriminator):
         
         # Final patch classification
         self.conv5 = Conv(512, 1, 4, 1, 1)
-        
+
         self.leaky_relu = nn.LeakyReLU(0.2)
-        self.sigmoid = nn.Sigmoid()
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Input is already in PyTorch channels-first format: (batch, channels, depth, height, width)
-        
+
         # Convolution blocks
         x = self.conv1(x)
         x = self.leaky_relu(x)
@@ -430,8 +426,7 @@ class PatchDiscriminator(BaseDiscriminator):
         x = self.bn4(x)
         x = self.leaky_relu(x)
         
-        # Final patch classification
+        # Final patch classification — return logits for softplus loss
         x = self.conv5(x)
-        x = self.sigmoid(x)
-        
+
         return x

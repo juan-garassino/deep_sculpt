@@ -41,6 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--guidance-scale", type=float, default=1.0, help="Classifier-free guidance scale for sampling")
     parser.add_argument("--num-workers", type=int, default=0, help="Training dataloader workers")
     parser.add_argument("--ema-decay", type=float, default=0.9999, help="EMA decay")
+    parser.add_argument("--color", action="store_true", help="Enable 6-channel OHE color mode")
     parser.add_argument("--mixed-precision", action="store_true", help="Enable mixed precision for diffusion training")
     parser.add_argument("--cpu", action="store_true", help="Force CPU mode")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose CLI output")
@@ -101,6 +102,8 @@ def main() -> int:
         f"--ema-decay={args.ema_decay}",
         "--use-ema",
     ]
+    if args.color:
+        train_cmd.append("--color")
     if args.mixed_precision and not args.cpu:
         train_cmd.append("--mixed-precision")
     run_command(train_cmd, repo_root, env)

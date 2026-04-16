@@ -287,6 +287,7 @@ class DeepSculptV2Main:
             occupancy_loss_weight=args.occupancy_loss_weight,
             occupancy_floor=args.occupancy_floor,
             occupancy_target_mode=args.occupancy_target_mode,
+            ttur_ratio=getattr(args, 'ttur_ratio', 0.25),
             dataset_occupancy_mean=occupancy_stats.get("mean"),
             dataset_occupancy_p10=occupancy_stats.get("p10"),
             dataset_occupancy_p90=occupancy_stats.get("p90"),
@@ -1120,6 +1121,7 @@ def create_parser():
     train_gan_parser.add_argument('--use-ema', dest='use_ema', action='store_true', help='Use EMA weights for stable sampling/checkpoints')
     train_gan_parser.add_argument('--no-ema', dest='use_ema', action='store_false', help='Disable EMA weights')
     train_gan_parser.add_argument('--ema-decay', type=float, default=0.999, help='EMA decay for generator weights')
+    train_gan_parser.add_argument('--ttur-ratio', type=float, default=0.25, help='TTUR disc/gen LR ratio (lower = weaker disc)')
     train_gan_parser.add_argument('--r1-gamma', type=float, default=2.0, help='R1 regularization gamma')
     train_gan_parser.add_argument('--r1-interval', type=int, default=16, help='R1 lazy regularization interval')
     train_gan_parser.add_argument('--augment', default='none', choices=['none', 'ada-lite'], help='Discriminator-side augmentation policy')

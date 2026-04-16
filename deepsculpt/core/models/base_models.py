@@ -35,9 +35,10 @@ class BaseGenerator(nn.Module, ABC):
         self.device = device
         
         # Output channels based on color mode
-        # color_mode=0: monochrome (1 channel), color_mode=1: color (6 channels for RGB)
+        # color_mode=0: monochrome (1 channel), color_mode=1: OHE color classes (6 channels)
+        # MonochromeGenerator overrides to 3 channels for continuous RGB
         self.output_channels = 6 if color_mode == 1 else 1
-        
+
         # Statistics tracking
         self.generation_count = 0
         self.total_forward_time = 0.0
@@ -55,6 +56,20 @@ class BaseGenerator(nn.Module, ABC):
         """
         pass
     
+    def _apply_final_activation(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the correct final activation based on output mode.
+
+        - 6-ch OHE (color_mode=1): softmax over channel dim (pick one class)
+        - 3-ch RGB: tanh (continuous color in [-1, 1])
+        - 1-ch mono: sigmoid (binary occupancy)
+        """
+        if self.color_mode == 1 and self.output_channels >= 6:
+            return F.softmax(x, dim=1)  # dim=1 = channel dim in NCDHW
+        elif self.output_channels == 3:
+            return torch.tanh(x)
+        else:
+            return torch.sigmoid(x)
+
     def generate_sample(self, batch_size: int = 1) -> torch.Tensor:
         """
         Generate a sample using random noise.

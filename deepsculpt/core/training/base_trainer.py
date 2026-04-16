@@ -68,6 +68,7 @@ class TrainingConfig:
     augment_target: float = 0.6
     sample_from_ema: bool = True
     nan_guard: bool = True
+    ttur_ratio: float = 0.25
     occupancy_loss_weight: float = 5.0
     occupancy_floor: float = 0.01
     occupancy_target_mode: str = "batch_real"

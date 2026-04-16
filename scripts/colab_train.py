@@ -90,6 +90,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--occupancy-floor", type=float, default=0.01, help="Minimum healthy occupancy floor")
     parser.add_argument("--occupancy-target-mode", default="batch_real", choices=["batch_real", "dataset_mean"], help="Occupancy target source")
     parser.add_argument("--ema-decay", type=float, default=0.999, help="EMA decay")
+    parser.add_argument("--ttur-ratio", type=float, default=0.25, help="TTUR disc/gen LR ratio (lower = weaker disc)")
+    parser.add_argument("--color", action="store_true", help="Enable 6-channel OHE color mode")
     parser.add_argument("--mixed-precision", action="store_true", help="Enable mixed precision for GAN training")
     parser.add_argument("--cpu", action="store_true", help="Force CPU mode")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose CLI output")
@@ -157,11 +159,14 @@ def main() -> int:
         f"--occupancy-floor={args.occupancy_floor}",
         f"--occupancy-target-mode={args.occupancy_target_mode}",
         f"--ema-decay={args.ema_decay}",
+        f"--ttur-ratio={args.ttur_ratio}",
         "--use-ema",
         "--sample-from-ema",
         "--generate-samples",
         "--num-preview-samples=1",
     ]
+    if args.color:
+        train_cmd.append("--color")
     if args.mixed_precision and not args.cpu:
         train_cmd.append("--mixed-precision")
     run_command(train_cmd, repo_root, env)

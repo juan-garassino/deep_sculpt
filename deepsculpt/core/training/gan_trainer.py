@@ -157,6 +157,7 @@ class GANTrainer(BaseTrainer):
 
         # Adaptive balance controller state
         self._occupancy_health = 1.0  # EMA: 1.0 = healthy, 0.0 = collapsed
+        self._ema_disc_loss = 0.5  # EMA of disc loss to detect dominance
         self._adaptive_occ_weight = float(getattr(config, "occupancy_loss_weight", 5.0))
         self._base_occ_weight = self._adaptive_occ_weight
         self._adaptive_gen_steps = 1  # how many gen steps per disc step
@@ -306,6 +307,15 @@ class GANTrainer(BaseTrainer):
         ema_beta = 0.95
         self._occupancy_health = ema_beta * self._occupancy_health + (1 - ema_beta) * instant_health
 
+        # --- Disc dominance detection ------------------------------------
+        # When disc loss stays near zero, the disc wins trivially even if
+        # occupancy looks fine. Penalize health to trigger throttling.
+        disc_loss = metrics.get("disc_loss", 0.5)
+        self._ema_disc_loss = ema_beta * self._ema_disc_loss + (1 - ema_beta) * disc_loss
+        if self._ema_disc_loss < 0.05:
+            disc_penalty = 1.0 - (self._ema_disc_loss / 0.05)  # 0→1 as loss→0
+            self._occupancy_health *= (1.0 - 0.5 * disc_penalty)
+
         h = self._occupancy_health  # shorthand
 
         # --- 1. Occupancy penalty weight: boost when unhealthy -----------
@@ -316,8 +326,8 @@ class GANTrainer(BaseTrainer):
         # --- 2. Extra generator steps: 1 when healthy, up to 4 collapsed -
         self._adaptive_gen_steps = max(1, min(4, int(1 + 3 * (1.0 - h))))
 
-        # --- 3. Disc LR scale: 1× healthy → 0.25× collapsed -------------
-        self._disc_lr_scale = 0.25 + 0.75 * h
+        # --- 3. Disc LR scale: 1× healthy → 0.1× collapsed/dominated ---
+        self._disc_lr_scale = 0.1 + 0.9 * h
         for pg in self.disc_optimizer.param_groups:
             pg["lr"] = self._base_disc_lr * self._disc_lr_scale
 
@@ -610,16 +620,14 @@ class GANTrainer(BaseTrainer):
                 # For monochrome: 1 channel, for color: 6 channels
                 if structure.dim() == 4:  # [batch, depth, height, width]
                     if color_mode == 0:  # Monochrome mode expects 1 channel
-                        # Add single channel dimension at position 1 (PyTorch format)
                         # [batch, depth, height, width] -> [batch, 1, depth, height, width]
                         real_data = structure.unsqueeze(1)
-                    else:  # Color mode expects 6 channels
-                        # For color mode, we'd need to create 6 channels from structure and colors
+                    else:  # Color mode: one-hot encode color indices into 6 channels
                         colors = batch["colors"].to(self.device)
-                        # Create 6 channels - this is a simplified approach
-                        real_data = torch.stack([
-                            structure, colors, structure, colors, structure, colors
-                        ], dim=1)  # Stack along channel dimension
+                        # colors are class indices [B, D, H, W] → one-hot [B, D, H, W, 6] → [B, 6, D, H, W]
+                        num_classes = getattr(self.discriminator, 'input_channels', 6)
+                        real_data = F.one_hot(colors.long(), num_classes=num_classes).float()
+                        real_data = real_data.permute(0, 4, 1, 2, 3)
                 else:
                     real_data = structure
                 

@@ -34,8 +34,9 @@ OCCUPANCY_LOSS_WEIGHT ?= 5.0
 OCCUPANCY_FLOOR ?= 0.01
 OCCUPANCY_TARGET_MODE ?= batch_real
 EMA_DECAY ?= 0.999
+TTUR_RATIO ?= 0.25
 
-.PHONY: colab-train-mono colab-train-diffusion autoresearch-build
+.PHONY: colab-train-mono colab-train-color colab-train-diffusion colab-train-diffusion-color autoresearch-build
 
 colab-train-mono:
 	python scripts/colab_train.py \
@@ -61,7 +62,36 @@ colab-train-mono:
 		--occupancy-loss-weight "$(OCCUPANCY_LOSS_WEIGHT)" \
 		--occupancy-floor "$(OCCUPANCY_FLOOR)" \
 		--occupancy-target-mode "$(OCCUPANCY_TARGET_MODE)" \
-		--ema-decay "$(EMA_DECAY)"
+		--ema-decay "$(EMA_DECAY)" \
+		--ttur-ratio "$(TTUR_RATIO)"
+
+colab-train-color:
+	python scripts/colab_train.py \
+		--data-output "$(DATA_OUT)" \
+		--run-output "$(RUN_OUT)" \
+		--data-mode "$(DATA_MODE)" \
+		--structure-preset "$(STRUCTURE_PRESET)" \
+		--grid-count "$(GRID_COUNT)" \
+		--grid-step "$(GRID_STEP)" \
+		--num-samples "$(NUM_SAMPLES)" \
+		--epochs "$(EPOCHS)" \
+		--batch-size "$(BATCH_SIZE)" \
+		--void-dim "$(VOID_DIM)" \
+		--noise-dim "$(NOISE_DIM)" \
+		--num-inference-samples "$(NUM_INFERENCE_SAMPLES)" \
+		--num-workers "$(NUM_WORKERS)" \
+		--discriminator-type "$(DISCRIMINATOR_TYPE)" \
+		--r1-gamma "$(R1_GAMMA)" \
+		--r1-interval "$(R1_INTERVAL)" \
+		--augment "$(GAN_AUGMENT)" \
+		--augment-p "$(GAN_AUGMENT_P)" \
+		--augment-target "$(GAN_AUGMENT_TARGET)" \
+		--occupancy-loss-weight "$(OCCUPANCY_LOSS_WEIGHT)" \
+		--occupancy-floor "$(OCCUPANCY_FLOOR)" \
+		--occupancy-target-mode "$(OCCUPANCY_TARGET_MODE)" \
+		--ema-decay "$(EMA_DECAY)" \
+		--ttur-ratio "$(TTUR_RATIO)" \
+		--color
 
 colab-train-diffusion:
 	python scripts/colab_train_diffusion.py \
@@ -84,6 +114,29 @@ colab-train-diffusion:
 		--guidance-scale "$(GUIDANCE_SCALE)" \
 		--num-workers "$(NUM_WORKERS)" \
 		--ema-decay "$(EMA_DECAY)"
+
+colab-train-diffusion-color:
+	python scripts/colab_train_diffusion.py \
+		--data-output "$(DATA_OUT)" \
+		--run-output "$(RUN_OUT)" \
+		--data-mode "$(DATA_MODE)" \
+		--num-samples "$(NUM_SAMPLES)" \
+		--epochs "$(EPOCHS)" \
+		--batch-size "$(BATCH_SIZE)" \
+		--void-dim "$(VOID_DIM)" \
+		--timesteps "$(TIMESTEPS)" \
+		--learning-rate "$(LEARNING_RATE)" \
+		--weight-decay "$(WEIGHT_DECAY)" \
+		--noise-schedule "$(NOISE_SCHEDULE)" \
+		--beta-start "$(BETA_START)" \
+		--beta-end "$(BETA_END)" \
+		--num-inference-samples "$(NUM_INFERENCE_SAMPLES)" \
+		--num-inference-steps "$(NUM_INFERENCE_STEPS)" \
+		--sampler "$(DIFFUSION_SAMPLER)" \
+		--guidance-scale "$(GUIDANCE_SCALE)" \
+		--num-workers "$(NUM_WORKERS)" \
+		--ema-decay "$(EMA_DECAY)" \
+		--color
 
 autoresearch-build:
 	docker build -f autoresearch/Dockerfile -t deepsculpt-autoresearch .

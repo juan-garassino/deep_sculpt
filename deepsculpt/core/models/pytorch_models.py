@@ -299,6 +299,16 @@ class SparseBatchNorm3d(nn.Module):
         self.sparse_mode = mode
 
 
+def _final_activation(x: torch.Tensor, color_mode: int, output_channels: int) -> torch.Tensor:
+    """Apply correct final activation based on output mode."""
+    if color_mode == 1 and output_channels >= 6:
+        return F.softmax(x, dim=1)  # OHE: pick one class
+    elif output_channels == 3:
+        return torch.tanh(x)  # RGB: continuous color [-1, 1]
+    else:
+        return torch.sigmoid(x)  # Mono: binary occupancy
+
+
 class SimpleGenerator(nn.Module):
     """Simple generator model equivalent to TensorFlow version."""
     
@@ -333,9 +343,7 @@ class SimpleGenerator(nn.Module):
         self.conv4 = ConvTranspose(noise_dim // 4, self.output_channels, 3, 2, 1, 1, bias=False)
         
         self.relu = nn.ReLU()
-        self.threshold_relu = nn.Threshold(0.0, 0.0)
-        self.softmax = nn.Softmax(dim=1)
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Initial dense layer and reshape
         x = self.fc(x)
@@ -348,7 +356,7 @@ class SimpleGenerator(nn.Module):
             x = self.bn1(x)
         x = self.relu(x)
         x = x.view(-1, self.noise_dim, self.initial_size, self.initial_size, self.initial_size)
-        
+
         # First transposed conv block
         x = self.conv1(x)
         if x.size(0) == 1 and self.training:
@@ -358,7 +366,7 @@ class SimpleGenerator(nn.Module):
         else:
             x = self.bn2(x)
         x = self.relu(x)
-        
+
         # Second transposed conv block
         x = self.conv2(x)
         if x.size(0) == 1 and self.training:
@@ -368,7 +376,7 @@ class SimpleGenerator(nn.Module):
         else:
             x = self.bn3(x)
         x = self.relu(x)
-        
+
         # Third transposed conv block
         x = self.conv3(x)
         if x.size(0) == 1 and self.training:
@@ -378,11 +386,10 @@ class SimpleGenerator(nn.Module):
         else:
             x = self.bn4(x)
         x = self.relu(x)
-        
+
         # Final transposed conv block
         x = self.conv4(x)
-        x = self.softmax(x)
-        x = self.threshold_relu(x)
+        x = _final_activation(x, self.color_mode, self.output_channels)
         
         # Reshape to final output
         x = x.view(-1, self.void_dim, self.void_dim, self.void_dim, self.output_channels)
@@ -424,41 +431,40 @@ class ComplexGenerator(nn.Module):
         self.conv4 = ConvTranspose(noise_dim // 4 * 2, self.output_channels, 3, 2, 1, 1, bias=False)
         
         self.leaky_relu = nn.LeakyReLU(0.2)
-        self.tanh = nn.Tanh()
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Initial dense layer and reshape
         x = self.fc(x)
         x = self.bn1(x)
         x = self.leaky_relu(x)
         x = x.view(-1, self.noise_dim, self.initial_size, self.initial_size, self.initial_size)
-        
+
         skip_connections = []
-        
+
         # First layer
         x = self.conv1(x)
         x = self.bn2(x)
         x = self.leaky_relu(x)
         skip_connections.append(x)
-        
+
         # Second layer with skip connection
         x = torch.cat([x, skip_connections[-1]], dim=1)
         x = self.conv2(x)
         x = self.bn3(x)
         x = self.leaky_relu(x)
         skip_connections.append(x)
-        
+
         # Third layer with skip connection
         x = torch.cat([x, skip_connections[-1]], dim=1)
         x = self.conv3(x)
         x = self.bn4(x)
         x = self.leaky_relu(x)
         skip_connections.append(x)
-        
+
         # Final layer with skip connection
         x = torch.cat([x, skip_connections[-1]], dim=1)
         x = self.conv4(x)
-        x = self.tanh(x)
+        x = _final_activation(x, self.color_mode, self.output_channels)
         
         # Reshape to final output
         x = x.view(-1, self.void_dim, self.void_dim, self.void_dim, self.output_channels)
@@ -499,41 +505,40 @@ class SkipGenerator(nn.Module):
         self.conv4 = ConvTranspose(noise_dim // 4 * 2, self.output_channels, 3, 2, 1, 1, bias=False)
         
         self.relu = nn.ReLU()
-        self.threshold_relu = nn.Threshold(0.0, 0.0)
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Initial dense layer and reshape
         x = self.fc(x)
         x = self.bn1(x)
         x = self.relu(x)
         x = x.view(-1, self.noise_dim, self.initial_size, self.initial_size, self.initial_size)
-        
+
         skip_connections = []
-        
+
         # First layer
         x = self.conv1(x)
         x = self.bn2(x)
         x = self.relu(x)
         skip_connections.append(x)
-        
+
         # Second layer with skip connection
         x = torch.cat([x, skip_connections[-1]], dim=1)
         x = self.conv2(x)
         x = self.bn3(x)
         x = self.relu(x)
         skip_connections.append(x)
-        
+
         # Third layer with skip connection
         x = torch.cat([x, skip_connections[-1]], dim=1)
         x = self.conv3(x)
         x = self.bn4(x)
         x = self.relu(x)
         skip_connections.append(x)
-        
+
         # Final layer with skip connection
         x = torch.cat([x, skip_connections[-1]], dim=1)
         x = self.conv4(x)
-        x = self.threshold_relu(x)
+        x = _final_activation(x, self.color_mode, self.output_channels)
         
         # Reshape to final output
         x = x.view(-1, self.void_dim, self.void_dim, self.void_dim, self.output_channels)
@@ -573,36 +578,34 @@ class MonochromeGenerator(nn.Module):
         self.bn4 = BatchNorm(noise_dim // 4)
         
         self.conv4 = ConvTranspose(noise_dim // 4, self.output_channels, 3, 2, 1, 1, bias=False)
-        
+
         self.relu = nn.ReLU()
-        self.threshold_relu = nn.Threshold(0.0, 0.0)
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Initial dense layer and reshape
         x = self.fc(x)
         x = self.bn1(x)
         x = self.relu(x)
         x = x.view(-1, self.noise_dim, self.initial_size, self.initial_size, self.initial_size)
-        
+
         # First transposed conv block
         x = self.conv1(x)
         x = self.bn2(x)
         x = self.relu(x)
-        
+
         # Second transposed conv block
         x = self.conv2(x)
         x = self.bn3(x)
         x = self.relu(x)
-        
+
         # Third transposed conv block
         x = self.conv3(x)
         x = self.bn4(x)
         x = self.relu(x)
-        
+
         # Final transposed conv block
         x = self.conv4(x)
-        x = self.relu(x)
-        x = self.threshold_relu(x)
+        x = _final_activation(x, self.color_mode, self.output_channels)
         
         # Reshape to final output
         x = x.view(-1, self.void_dim, self.void_dim, self.void_dim, self.output_channels)
@@ -633,23 +636,22 @@ class AutoencoderGenerator(nn.Module):
         self.conv3 = ConvTranspose(64, self.output_channels, 5, 2, 2, 1)
         
         self.relu = nn.ReLU()
-        self.sigmoid = nn.Sigmoid()
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Dense layer to expand latent dimension
         x = self.fc(x)
         x = self.relu(x)
         x = x.view(-1, 16, 4, 4, 4)  # Reshape to 4x4x4x16
-        
+
         # Upsampling layers
         x = self.conv1(x)  # 4x4x4 -> 8x8x8
         x = self.relu(x)
-        
+
         x = self.conv2(x)  # 8x8x8 -> 16x16x16
         x = self.relu(x)
-        
+
         x = self.conv3(x)  # 16x16x16 -> 32x32x32
-        x = self.sigmoid(x)
+        x = _final_activation(x, self.color_mode, self.output_channels)
         
         # Reshape to match expected format (batch, depth, height, width, channels)
         x = x.permute(0, 2, 3, 4, 1)
@@ -728,17 +730,18 @@ class ProgressiveGenerator(nn.Module):
         for i in range(min(self.current_level + 1, len(self.progressive_blocks))):
             x = self.progressive_blocks[i](x)
         
-        # Convert to RGB
+        # Convert to output channels
         x = self.to_rgb(x)
-        
+        x = _final_activation(x, self.color_mode, self.output_channels)
+
         return x
-    
+
     def grow(self):
         """Grow the network by one level."""
         if self.current_level < len(self.progressive_blocks) - 1:
             self.current_level += 1
             self.alpha = 0.0  # Start with full blend to new layer
-    
+
     def set_alpha(self, alpha: float):
         """Set the blending factor for progressive growing."""
         self.alpha = max(0.0, min(1.0, alpha))
@@ -1724,8 +1727,7 @@ class SimpleDiscriminator(nn.Module):
         
         self.leaky_relu = nn.LeakyReLU(0.01)
         self.dropout = nn.Dropout(0.3)
-        self.sigmoid = nn.Sigmoid()
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Reshape input from (batch, void_dim, void_dim, void_dim, channels) to (batch, channels, void_dim, void_dim, void_dim)
         x = x.permute(0, 4, 1, 2, 3)
@@ -1745,12 +1747,11 @@ class SimpleDiscriminator(nn.Module):
         x = self.conv4(x)
         x = self.leaky_relu(x)
         x = self.dropout(x)
-        
-        # Flatten and final linear layer
+
+        # Flatten and final linear layer — return logits for softplus loss
         x = x.reshape(x.size(0), -1)
         x = self.fc(x)
-        x = self.sigmoid(x)
-        
+
         return x
 
 
@@ -1798,8 +1799,7 @@ class ComplexDiscriminator(nn.Module):
         
         self.leaky_relu = nn.LeakyReLU(0.2)
         self.dropout = nn.Dropout(0.3)
-        self.sigmoid = nn.Sigmoid()
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Reshape input
         x = x.permute(0, 4, 1, 2, 3)
@@ -1840,9 +1840,9 @@ class ComplexDiscriminator(nn.Module):
         x = self.fc1(x)
         x = self.leaky_relu(x)
         x = self.dropout(x)
+        # Return logits for softplus loss
         x = self.fc2(x)
-        x = self.sigmoid(x)
-        
+
         return x
 
 
@@ -1895,26 +1895,24 @@ class AutoencoderDiscriminator(nn.Module):
         self.fc = nn.Linear(128 * final_size ** 3, 1)
         
         self.leaky_relu = nn.LeakyReLU(0.2)
-        self.sigmoid = nn.Sigmoid()
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Reshape input from (batch, depth, height, width, channels) to (batch, channels, depth, height, width)
         x = x.permute(0, 4, 1, 2, 3)
-        
+
         x = self.conv1(x)
         x = self.leaky_relu(x)
-        
+
         x = self.conv2(x)
         x = self.leaky_relu(x)
-        
+
         x = self.conv3(x)
         x = self.leaky_relu(x)
-        
-        # Flatten and final linear layer
+
+        # Flatten and final linear layer — return logits for softplus loss
         x = x.reshape(x.size(0), -1)
         x = self.fc(x)
-        x = self.sigmoid(x)
-        
+
         return x
 
 
@@ -2154,40 +2152,38 @@ class ConditionalDiscriminator(nn.Module):
         
         self.leaky_relu = nn.LeakyReLU(0.2)
         self.dropout = nn.Dropout(0.3)
-        self.sigmoid = nn.Sigmoid()
-    
+
     def forward(self, x: torch.Tensor, condition: torch.Tensor) -> torch.Tensor:
         # Embed condition and reshape to match input dimensions
         condition_emb = self.condition_embedding(condition)
         condition_emb = condition_emb.view(-1, self.void_dim, self.void_dim, self.void_dim, 1)
-        
+
         # Concatenate input and condition
         x = torch.cat([x, condition_emb], dim=-1)
-        
+
         # Reshape for convolution
         x = x.permute(0, 4, 1, 2, 3)
-        
+
         x = self.conv1(x)
         x = self.leaky_relu(x)
         x = self.dropout(x)
-        
+
         x = self.conv2(x)
         x = self.leaky_relu(x)
         x = self.dropout(x)
-        
+
         x = self.conv3(x)
         x = self.leaky_relu(x)
         x = self.dropout(x)
-        
+
         x = self.conv4(x)
         x = self.leaky_relu(x)
         x = self.dropout(x)
-        
-        # Flatten and final linear layer
+
+        # Flatten and final linear layer — return logits for softplus loss
         x = x.reshape(x.size(0), -1)
         x = self.fc(x)
-        x = self.sigmoid(x)
-        
+
         return x
 # ============================================================================
 # MODEL FACTORY AND UTILITIES
