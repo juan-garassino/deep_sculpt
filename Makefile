@@ -1,5 +1,5 @@
 # ----------------------------------
-#      COLAB TRAINING
+#      TRAINING DEFAULTS
 # ----------------------------------
 
 DATA_OUT ?= ./colab_data
@@ -8,8 +8,8 @@ DATA_MODE ?= reuse
 STRUCTURE_PRESET ?= architectural
 GRID_COUNT ?= 1
 GRID_STEP ?= 4
-NUM_SAMPLES ?= 100
-EPOCHS ?= 10
+NUM_SAMPLES ?= 5000
+EPOCHS ?= 200
 BATCH_SIZE ?= 4
 VOID_DIM ?= 32
 NOISE_DIM ?= 100
@@ -25,16 +25,50 @@ DIFFUSION_SAMPLER ?= ddim
 GUIDANCE_SCALE ?= 1.0
 NUM_WORKERS ?= 0
 DISCRIMINATOR_TYPE ?= spectral_norm
-R1_GAMMA ?= 2.0
+R1_GAMMA ?= 10.0
 R1_INTERVAL ?= 16
 GAN_AUGMENT ?= none
 GAN_AUGMENT_P ?= 0.0
 GAN_AUGMENT_TARGET ?= 0.7
-OCCUPANCY_LOSS_WEIGHT ?= 5.0
-OCCUPANCY_FLOOR ?= 0.01
+OCCUPANCY_LOSS_WEIGHT ?= 20.0
+OCCUPANCY_FLOOR ?= 0.02
 OCCUPANCY_TARGET_MODE ?= batch_real
 EMA_DECAY ?= 0.999
-TTUR_RATIO ?= 0.25
+TTUR_RATIO ?= 0.1
+
+# ----------------------------------
+#      GPU PRESETS
+# ----------------------------------
+# Usage: make colab-train-mono GPU=t4
+#        make colab-train-mono GPU=a100
+#        make colab-train-mono GPU=h100
+
+ifeq ($(GPU),t4)
+  # Tesla T4 (16GB) — Colab free/pro
+  VOID_DIM := 32
+  BATCH_SIZE := 4
+  NUM_SAMPLES := 5000
+  EPOCHS := 200
+  NUM_WORKERS := 2
+endif
+
+ifeq ($(GPU),a100)
+  # A100 (40-80GB) — Colab pro+, cloud
+  VOID_DIM := 64
+  BATCH_SIZE := 8
+  NUM_SAMPLES := 10000
+  EPOCHS := 300
+  NUM_WORKERS := 4
+endif
+
+ifeq ($(GPU),h100)
+  # H100 (80GB) — maximum quality
+  VOID_DIM := 128
+  BATCH_SIZE := 4
+  NUM_SAMPLES := 10000
+  EPOCHS := 300
+  NUM_WORKERS := 4
+endif
 
 .PHONY: colab-train-mono colab-train-color colab-train-diffusion colab-train-diffusion-color autoresearch-build
 
