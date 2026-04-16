@@ -326,7 +326,8 @@ class Visualizer:
                     else:
                         axes[i].voxels(
                             rotated_structure,
-                            edgecolors="k",
+                            facecolors="#E87F2A",
+                            edgecolors="#C06A20",
                             linewidth=linewidth,
                         )
                         log_info(
@@ -477,7 +478,8 @@ class Visualizer:
             else:
                 ax.voxels(
                     rotated_structure,
-                    edgecolors="k",
+                    facecolors="#E87F2A",
+                    edgecolors="#C06A20",
                     linewidth=linewidth,
                 )
                 log_info(f"Plotted without colors")
@@ -738,7 +740,8 @@ class Visualizer:
                 else:
                     voxel = ax.voxels(
                         structure,
-                        edgecolors="k",
+                        facecolors="#E87F2A",
+                        edgecolors="#C06A20",
                         linewidth=linewidth,
                     )
 
