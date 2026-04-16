@@ -433,28 +433,39 @@ class PatchDiscriminator(BaseDiscriminator):
 
 
 class LightDiscriminator(BaseDiscriminator):
-    """Lightweight discriminator for 3D sparse voxel GANs.
+    """Lightweight projection discriminator for 3D sparse voxel GANs.
 
-    Deliberately small (3 conv layers, ~500K params) to balance against a
-    stronger generator. Uses spectral norm for stability, adaptive pooling
-    for void_dim independence.
+    Deliberately small (~500K params) to balance against a stronger generator.
+    Features:
+    - Spectral norm for Lipschitz stability
+    - Projection head: judges mean + variance of features (global statistics)
+      instead of specific voxel patterns — harder to memorize
+    - Returns intermediate features for feature matching loss
     """
 
     def __init__(self, void_dim: int = 64, color_mode: int = 1, sparse: bool = False):
         super().__init__(void_dim, color_mode, sparse)
         Conv = SparseConv3d if sparse else nn.Conv3d
         ch = 32
-        self.net = nn.Sequential(
-            nn.utils.spectral_norm(Conv(self.input_channels, ch, 4, 2, 1)),
-            nn.LeakyReLU(0.2),
-            nn.utils.spectral_norm(Conv(ch, ch * 2, 4, 2, 1)),
-            nn.LeakyReLU(0.2),
-            nn.utils.spectral_norm(Conv(ch * 2, ch * 4, 4, 2, 1)),
-            nn.LeakyReLU(0.2),
-            nn.AdaptiveAvgPool3d(1),
-            nn.Flatten(),
-            nn.utils.spectral_norm(nn.Linear(ch * 4, 1)),
-        )
+        self.conv1 = nn.utils.spectral_norm(Conv(self.input_channels, ch, 4, 2, 1))
+        self.conv2 = nn.utils.spectral_norm(Conv(ch, ch * 2, 4, 2, 1))
+        self.conv3 = nn.utils.spectral_norm(Conv(ch * 2, ch * 4, 4, 2, 1))
+        self.pool = nn.AdaptiveAvgPool3d(1)
+        # Projection: mean + variance of features → harder to overfit
+        self.fc = nn.utils.spectral_norm(nn.Linear(ch * 8, 1))
+        self.lrelu = nn.LeakyReLU(0.2)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+    def forward(self, x: torch.Tensor, return_features: bool = False) -> torch.Tensor:
+        f1 = self.lrelu(self.conv1(x))
+        f2 = self.lrelu(self.conv2(f1))
+        f3 = self.lrelu(self.conv3(f2))
+
+        # Projection: global mean + spatial variance
+        pooled = self.pool(f3).flatten(1)         # (B, ch*4)
+        std_pool = f3.std(dim=[2, 3, 4])          # (B, ch*4)
+        proj = torch.cat([pooled, std_pool], dim=1)  # (B, ch*8)
+        logit = self.fc(proj)
+
+        if return_features:
+            return logit, [f1, f2, f3]
+        return logit

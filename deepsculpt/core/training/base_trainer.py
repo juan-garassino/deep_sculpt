@@ -69,6 +69,10 @@ class TrainingConfig:
     sample_from_ema: bool = True
     nan_guard: bool = True
     ttur_ratio: float = 0.25
+    gan_loss_type: str = "wgan-gp"  # "softplus" or "wgan-gp"
+    feature_matching_weight: float = 1.0
+    use_disc_ema: bool = True
+    disc_ema_decay: float = 0.999
     occupancy_loss_weight: float = 5.0
     occupancy_floor: float = 0.01
     occupancy_target_mode: str = "batch_real"

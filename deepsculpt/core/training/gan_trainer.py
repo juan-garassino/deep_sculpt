@@ -139,6 +139,7 @@ class GANTrainer(BaseTrainer):
         # Initialize metrics tracker
         self.metrics_tracker = TrainingMetrics()
         self.ema_generator = self._create_ema_generator() if config.use_ema else None
+        self.ema_discriminator = self._create_ema_discriminator() if getattr(config, 'use_disc_ema', True) else None
         self.augment_p = float(getattr(config, "augment_p", 0.0))
         self.collapse_events = 0
         self.nan_events = 0
@@ -179,6 +180,31 @@ class GANTrainer(BaseTrainer):
         with torch.no_grad():
             for ema_param, param in zip(self.ema_generator.parameters(), self.generator.parameters()):
                 ema_param.data.mul_(ema_decay).add_(param.data, alpha=1 - ema_decay)
+
+    def _create_ema_discriminator(self) -> nn.Module:
+        """Create EMA discriminator for stable adversarial signal to the generator."""
+        ema_disc = copy.deepcopy(self.discriminator)
+        ema_disc.eval()
+        return ema_disc.to(self.device)
+
+    def _update_ema_discriminator(self):
+        """Update EMA discriminator weights."""
+        if self.ema_discriminator is None:
+            return
+        ema_decay = getattr(self.config, "disc_ema_decay", 0.999)
+        with torch.no_grad():
+            for ema_p, p in zip(self.ema_discriminator.parameters(), self.discriminator.parameters()):
+                ema_p.data.mul_(ema_decay).add_(p.data, alpha=1 - ema_decay)
+
+    def _compute_gradient_penalty(self, real: torch.Tensor, fake: torch.Tensor) -> torch.Tensor:
+        """WGAN-GP gradient penalty on interpolated samples."""
+        alpha = torch.rand(real.size(0), 1, 1, 1, 1, device=real.device)
+        interpolated = (alpha * real + (1 - alpha) * fake).requires_grad_(True)
+        d_interp = self.discriminator(interpolated)
+        grads = torch.autograd.grad(
+            outputs=d_interp.sum(), inputs=interpolated, create_graph=True,
+        )[0]
+        return ((grads.reshape(grads.size(0), -1).norm(2, dim=1) - 1) ** 2).mean()
 
     def _generator_for_sampling(self) -> nn.Module:
         """Return the generator to use for checkpoints and sample exports."""
@@ -477,6 +503,9 @@ class GANTrainer(BaseTrainer):
         skip_disc = self._occupancy_health < 0.1
         disc_grad_norm = 0.0
 
+        use_wgan = getattr(self.config, "gan_loss_type", "softplus") == "wgan-gp"
+        fm_weight = float(getattr(self.config, "feature_matching_weight", 1.0))
+
         if not skip_disc:
             self.disc_optimizer.zero_grad(set_to_none=True)
             noise = torch.randn(batch_size, self.noise_dim, device=self.device)
@@ -487,25 +516,38 @@ class GANTrainer(BaseTrainer):
                 fake_noisy = fake_for_disc + noise_std * torch.randn_like(fake_for_disc) if noise_std > 0 else fake_for_disc
                 real_logits = self.discriminator(self._apply_ada_lite(real_noisy))
                 fake_logits = self.discriminator(self._apply_ada_lite(fake_noisy))
-                disc_real_loss = F.softplus(-real_logits).mean()
-                disc_fake_loss = F.softplus(fake_logits).mean()
-                disc_loss = disc_real_loss + disc_fake_loss
+
+                if use_wgan:
+                    # Wasserstein loss: maximize E[D(real)] - E[D(fake)]
+                    disc_real_loss = -real_logits.mean()
+                    disc_fake_loss = fake_logits.mean()
+                    disc_loss = disc_real_loss + disc_fake_loss
+                else:
+                    disc_real_loss = F.softplus(-real_logits).mean()
+                    disc_fake_loss = F.softplus(fake_logits).mean()
+                    disc_loss = disc_real_loss + disc_fake_loss
 
             disc_loss.backward()
-            if self.config.gradient_clip > 0:
-                torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.config.gradient_clip)
-            disc_grad_norm = self._gradient_norm(self.discriminator.parameters())
-            self.disc_optimizer.step()
 
-            if self.global_step % max(1, getattr(self.config, "r1_interval", 16)) == 0:
+            # WGAN-GP: gradient penalty on interpolated samples
+            if use_wgan:
+                self.disc_optimizer.zero_grad(set_to_none=True)
+                gp = self._compute_gradient_penalty(real_data, fake_for_disc)
+                r1_penalty_value = float(gp.item())
+                gp_loss = 10.0 * gp
+                gp_loss.backward()
+            elif self.global_step % max(1, getattr(self.config, "r1_interval", 16)) == 0:
+                # R1 penalty for softplus mode
                 self.disc_optimizer.zero_grad(set_to_none=True)
                 r1_penalty = self._compute_r1_penalty(real_data)
                 r1_penalty_value = float(r1_penalty.item())
                 r1_loss = 0.5 * getattr(self.config, "r1_gamma", 10.0) * r1_penalty * max(1, getattr(self.config, "r1_interval", 16))
                 r1_loss.backward()
-                if self.config.gradient_clip > 0:
-                    torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.config.gradient_clip)
-                self.disc_optimizer.step()
+
+            if self.config.gradient_clip > 0:
+                torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.config.gradient_clip)
+            disc_grad_norm = self._gradient_norm(self.discriminator.parameters())
+            self.disc_optimizer.step()
         else:
             # Still need logits for metrics even when skipping disc update
             with torch.no_grad():
@@ -520,23 +562,46 @@ class GANTrainer(BaseTrainer):
         # --- Generator steps (adaptive count: 1 when healthy, up to 4) ---
         occ_weight = self._adaptive_occ_weight
         gen_steps = self._adaptive_gen_steps
-
-        # Gate adversarial loss by occupancy health: when the generator is
-        # far from the target density, dampen the adversarial signal so the
-        # occupancy penalty can actually steer without being overwhelmed.
-        # adv_gate: 1.0 when healthy, ~0.1 when collapsed.
         adv_gate = max(0.1, self._occupancy_health)
+
+        # Use EMA disc for gen's adversarial loss — stable, slowly-moving target
+        disc_for_gen = self.ema_discriminator if self.ema_discriminator is not None else self.discriminator
+
+        # Cache real features for feature matching (computed once per step)
+        fm_loss_value = 0.0
+        if fm_weight > 0 and hasattr(disc_for_gen, 'forward') and 'return_features' in disc_for_gen.forward.__code__.co_varnames:
+            with torch.no_grad():
+                _, real_features = disc_for_gen(real_data, return_features=True)
+                real_feat_means = [rf.mean(0).detach() for rf in real_features]
+        else:
+            real_feat_means = None
 
         for _ in range(gen_steps):
             self.gen_optimizer.zero_grad(set_to_none=True)
             noise = torch.randn(batch_size, self.noise_dim, device=self.device)
             with torch.autocast(device_type=self.device, enabled=autocast_enabled):
                 fake_for_gen = self.generator(noise)
-                gen_logits = self.discriminator(self._apply_ada_lite(fake_for_gen))
-                adv_loss = F.softplus(-gen_logits).mean() * adv_gate
+
+                if use_wgan:
+                    gen_logits = disc_for_gen(fake_for_gen)
+                    adv_loss = -gen_logits.mean() * adv_gate
+                else:
+                    gen_logits = disc_for_gen(self._apply_ada_lite(fake_for_gen))
+                    adv_loss = F.softplus(-gen_logits).mean() * adv_gate
+
                 occupancy_penalty, fake_occupancy = self._occupancy_penalty(fake_for_gen, real_occupancy)
                 occupancy_loss = occupancy_penalty * occ_weight
-                gen_loss = adv_loss + occupancy_loss
+
+                # Feature matching: match intermediate disc feature statistics
+                if real_feat_means is not None and fm_weight > 0:
+                    _, fake_features = disc_for_gen(fake_for_gen, return_features=True)
+                    fm_loss = sum(F.mse_loss(ff.mean(0), rm)
+                                 for ff, rm in zip(fake_features, real_feat_means))
+                    fm_loss_value = float(fm_loss.item())
+                else:
+                    fm_loss = torch.tensor(0.0, device=self.device)
+
+                gen_loss = adv_loss + occupancy_loss + fm_weight * fm_loss
 
             gen_loss.backward()
             if self.config.gradient_clip > 0:
@@ -545,6 +610,7 @@ class GANTrainer(BaseTrainer):
             self.gen_optimizer.step()
 
         self._update_ema_generator()
+        self._update_ema_discriminator()
         if not skip_disc:
             self._update_augment_probability(real_logits.detach())
 
@@ -556,7 +622,8 @@ class GANTrainer(BaseTrainer):
             "disc_fake_loss": float(disc_fake_loss.item()),
             "disc_real_acc": float((real_logits.detach() > 0).float().mean().item()),
             "disc_fake_acc": float((fake_logits.detach() < 0).float().mean().item()),
-            "gradient_penalty": 0.0,
+            "feature_matching_loss": fm_loss_value,
+            "gradient_penalty": r1_penalty_value if use_wgan else 0.0,
             "r1_penalty": r1_penalty_value,
             "augment_p": float(self.augment_p),
             "real_occupancy": float(real_occupancy.item()),
@@ -663,11 +730,9 @@ class GANTrainer(BaseTrainer):
                     f"Epoch {self.current_epoch}, Batch {batch_idx}: "
                     f"G: {step_metrics.get('gen_loss', 0):.4f}, "
                     f"D: {step_metrics.get('disc_loss', 0):.4f}, "
+                    f"FM: {step_metrics.get('feature_matching_loss', 0):.4f}, "
                     f"FakeOcc: {step_metrics.get('fake_occupancy', 0):.4f}, "
-                    f"Health: {step_metrics.get('occ_health', 1):.2f}, "
-                    f"OccW: {step_metrics.get('adaptive_occ_weight', 0):.1f}, "
-                    f"GenSteps: {step_metrics.get('adaptive_gen_steps', 1):.0f}, "
-                    f"DScale: {step_metrics.get('disc_lr_scale', 1):.2f}"
+                    f"Health: {step_metrics.get('occ_health', 1):.2f}"
                 )
 
             self.global_step += 1

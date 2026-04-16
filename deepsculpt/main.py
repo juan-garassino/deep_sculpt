@@ -282,6 +282,8 @@ class DeepSculptV2Main:
             gradient_clip=args.gradient_clip,
             use_ema=args.use_ema,
             ema_decay=args.ema_decay,
+            gan_loss_type=getattr(args, 'gan_loss_type', 'wgan-gp'),
+            feature_matching_weight=getattr(args, 'feature_matching_weight', 1.0),
             r1_gamma=args.r1_gamma,
             r1_interval=args.r1_interval,
             augment=args.augment,
@@ -1123,6 +1125,8 @@ def create_parser():
     train_gan_parser.add_argument('--scheduler', action='store_true', help='Use learning rate scheduler')
     train_gan_parser.add_argument('--scheduler-step', type=int, default=30, help='Scheduler step size')
     train_gan_parser.add_argument('--scheduler-gamma', type=float, default=0.1, help='Scheduler gamma')
+    train_gan_parser.add_argument('--gan-loss-type', default='wgan-gp', choices=['softplus', 'wgan-gp'], help='GAN loss function')
+    train_gan_parser.add_argument('--feature-matching-weight', type=float, default=1.0, help='Feature matching loss weight')
     train_gan_parser.add_argument('--use-ema', dest='use_ema', action='store_true', help='Use EMA weights for stable sampling/checkpoints')
     train_gan_parser.add_argument('--no-ema', dest='use_ema', action='store_false', help='Disable EMA weights')
     train_gan_parser.add_argument('--ema-decay', type=float, default=0.999, help='EMA decay for generator weights')

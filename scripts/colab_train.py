@@ -91,6 +91,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--occupancy-target-mode", default="batch_real", choices=["batch_real", "dataset_mean"], help="Occupancy target source")
     parser.add_argument("--ema-decay", type=float, default=0.999, help="EMA decay")
     parser.add_argument("--ttur-ratio", type=float, default=0.25, help="TTUR disc/gen LR ratio (lower = weaker disc)")
+    parser.add_argument("--gan-loss-type", default="wgan-gp", choices=["softplus", "wgan-gp"], help="GAN loss function")
+    parser.add_argument("--feature-matching-weight", type=float, default=1.0, help="Feature matching loss weight")
     parser.add_argument("--gen-channels", type=int, default=None, help="Generator base channel width (default: noise_dim)")
     parser.add_argument("--color", action="store_true", help="Enable 6-channel OHE color mode")
     parser.add_argument("--mixed-precision", action="store_true", help="Enable mixed precision for GAN training")
@@ -161,6 +163,8 @@ def main() -> int:
         f"--occupancy-target-mode={args.occupancy_target_mode}",
         f"--ema-decay={args.ema_decay}",
         f"--ttur-ratio={args.ttur_ratio}",
+        f"--gan-loss-type={args.gan_loss_type}",
+        f"--feature-matching-weight={args.feature_matching_weight}",
         "--use-ema",
         "--sample-from-ema",
         "--generate-samples",
