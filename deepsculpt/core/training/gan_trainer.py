@@ -329,9 +329,10 @@ class GANTrainer(BaseTrainer):
                 raise RuntimeError("Non-finite GAN metrics detected")
 
         occupancy_floor = float(getattr(self.config, "occupancy_floor", 0.01))
+        # Collapse is defined by occupancy only — low disc_loss is normal
+        # with TTUR and doesn't indicate collapse by itself.
         is_collapsed = (
-            metrics.get("disc_loss", 1.0) < 1e-3
-            or metrics.get("fake_occupancy", 0.5) < occupancy_floor
+            metrics.get("fake_occupancy", 0.5) < occupancy_floor
             or metrics.get("fake_occupancy", 0.5) > 0.9999
         )
 
