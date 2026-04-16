@@ -83,7 +83,7 @@ class TrainingConfig:
     
     # Checkpointing and logging
     checkpoint_freq: int = 5
-    log_freq: int = 10
+    log_freq: int = 250
     snapshot_freq: int = 1
     
     # Paths
