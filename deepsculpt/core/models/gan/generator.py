@@ -164,76 +164,103 @@ class ComplexGenerator(BaseGenerator):
         return x
 
 
+class _StraightThroughBinarize(torch.autograd.Function):
+    """Binarize in forward pass (round to 0/1), pass gradient straight through."""
+
+    @staticmethod
+    def forward(ctx, x):
+        return (x > 0.5).float()
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output
+
+
+def straight_through_binarize(x: torch.Tensor) -> torch.Tensor:
+    return _StraightThroughBinarize.apply(x)
+
+
 class SkipGenerator(BaseGenerator):
-    """Generator with skip connections (U-Net style)."""
-    
+    """Generator with skip connections for sparse 3D voxel generation.
+
+    Architecture fixes vs the original:
+    - Proper skip connections: early layers feed into later layers (not
+      self-concatenation which just doubles channels without information).
+    - Final conv has a bias initialized so sigmoid(bias) ≈ target occupancy
+      (~5%), preventing the 50% → 0% collapse trajectory.
+    - Straight-through binarization: output is {0,1} like real data so the
+      discriminator cannot use "continuous vs binary" as a shortcut.
+    """
+
     def __init__(self, void_dim: int = 64, noise_dim: int = 100, color_mode: int = 1, sparse: bool = False):
         super().__init__(void_dim, noise_dim, color_mode, sparse)
-        
+
         self.initial_size = void_dim // 8
-        
-        # Initial dense layer
-        self.fc = nn.Linear(noise_dim, self.initial_size ** 3 * noise_dim, bias=False)
-        self.bn1 = nn.BatchNorm1d(self.initial_size ** 3 * noise_dim)
-        
-        # Transposed convolution layers
+
         ConvTranspose = SparseConvTranspose3d if sparse else nn.ConvTranspose3d
         BatchNorm = SparseBatchNorm3d if sparse else nn.BatchNorm3d
-        
+
+        # Encoder-like path (builds features at each scale)
+        self.fc = nn.Linear(noise_dim, self.initial_size ** 3 * noise_dim, bias=False)
+        self.bn1 = nn.BatchNorm1d(self.initial_size ** 3 * noise_dim)
+
         self.conv1 = ConvTranspose(noise_dim, noise_dim, 3, 1, 1, bias=False)
         self.bn2 = BatchNorm(noise_dim)
-        
-        self.conv2 = ConvTranspose(noise_dim * 2, noise_dim // 2, 3, 2, 1, 1, bias=False)
+
+        # Skip connections: conv1 output (noise_dim ch) feeds into conv3 input
+        # conv2 output (noise_dim//2 ch) feeds into conv4 input
+        self.conv2 = ConvTranspose(noise_dim, noise_dim // 2, 3, 2, 1, 1, bias=False)
         self.bn3 = BatchNorm(noise_dim // 2)
-        
-        self.conv3 = ConvTranspose(noise_dim // 2 * 2, noise_dim // 4, 3, 2, 1, 1, bias=False)
+
+        self.conv3 = ConvTranspose(noise_dim // 2 + noise_dim, noise_dim // 4, 3, 2, 1, 1, bias=False)
         self.bn4 = BatchNorm(noise_dim // 4)
-        
-        self.conv4 = ConvTranspose(noise_dim // 4 * 2, self.output_channels, 3, 2, 1, 1, bias=False)
-        
+
+        # bias=True so we can init to produce ~5% occupancy
+        self.conv4 = ConvTranspose(noise_dim // 4 + noise_dim // 2, self.output_channels, 3, 2, 1, 1, bias=True)
+
+        # Init final bias so sigmoid(bias) ≈ 0.05 → bias ≈ log(0.05/0.95) ≈ -2.94
+        nn.init.constant_(self.conv4.bias, -2.94)
+
         self.relu = nn.ReLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Initial dense layer and reshape
         x = self.fc(x)
         x = self.bn1(x)
         x = self.relu(x)
         x = x.view(-1, self.noise_dim, self.initial_size, self.initial_size, self.initial_size)
 
-        skip_connections = []
+        # Scale 1: 4×4×4 (or initial_size)
+        s1 = self.conv1(x)
+        s1 = self.bn2(s1)
+        s1 = self.relu(s1)  # (B, noise_dim, 4, 4, 4)
 
-        # First layer
-        x = self.conv1(x)
-        x = self.bn2(x)
-        x = self.relu(x)
-        skip_connections.append(x)
+        # Scale 2: 8×8×8
+        s2 = self.conv2(s1)
+        s2 = self.bn3(s2)
+        s2 = self.relu(s2)  # (B, noise_dim//2, 8, 8, 8)
 
-        # Second layer with skip connection
-        x = torch.cat([x, skip_connections[-1]], dim=1)
-        x = self.conv2(x)
-        x = self.bn3(x)
-        x = self.relu(x)
-        skip_connections.append(x)
+        # Scale 3: 16×16×16 — skip from s1 (upsampled to match)
+        s1_up = F.interpolate(s1, scale_factor=2, mode='trilinear', align_corners=False)
+        x3 = torch.cat([s2, s1_up], dim=1)  # (B, noise_dim//2 + noise_dim, 8, 8, 8)
+        s3 = self.conv3(x3)
+        s3 = self.bn4(s3)
+        s3 = self.relu(s3)  # (B, noise_dim//4, 16, 16, 16)
 
-        # Third layer with skip connection
-        x = torch.cat([x, skip_connections[-1]], dim=1)
-        x = self.conv3(x)
-        x = self.bn4(x)
-        x = self.relu(x)
-        skip_connections.append(x)
+        # Scale 4: 32×32×32 — skip from s2 (upsampled to match)
+        s2_up = F.interpolate(s2, scale_factor=2, mode='trilinear', align_corners=False)
+        x4 = torch.cat([s3, s2_up], dim=1)  # (B, noise_dim//4 + noise_dim//2, 16, 16, 16)
+        logits = self.conv4(x4)  # (B, output_channels, 32, 32, 32)
 
-        # Final layer with skip connection
-        x = torch.cat([x, skip_connections[-1]], dim=1)
-        x = self.conv4(x)
-        # Sigmoid bounds output to [0,1] with gradients everywhere.
-        # Threshold/ReLU caused empty collapse: random-init produces ~50%
-        # occupancy, disc learns "dense=fake", gen overshoots to 0% with
-        # no gradient path back (ReLU is flat at 0).
-        x = torch.sigmoid(x)
+        # Sigmoid + straight-through binarization: output is {0,1} like real
+        # data. Discriminator sees binary from both sides — no density shortcut.
+        # Gradient flows through sigmoid via straight-through estimator.
+        soft = torch.sigmoid(logits)
+        if self.training:
+            x = straight_through_binarize(soft)
+        else:
+            x = (soft > 0.5).float()
 
-        # Reshape to final output in PyTorch format (channels first)
         x = x.view(-1, self.output_channels, self.void_dim, self.void_dim, self.void_dim)
-
         return x
 
 
