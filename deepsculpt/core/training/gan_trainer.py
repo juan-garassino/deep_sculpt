@@ -237,12 +237,17 @@ class GANTrainer(BaseTrainer):
             total_norm_sq += float(param.grad.detach().norm(2).item() ** 2)
         return total_norm_sq ** 0.5
 
-    def _compute_occupancy(self, batch: torch.Tensor) -> torch.Tensor:
+    def _compute_occupancy(self, batch: torch.Tensor, differentiable: bool = False) -> torch.Tensor:
         """Compute scalar occupancy ratio for a voxel batch.
 
-        Uses a 0.5 threshold so that sigmoid outputs (continuous in 0–1)
-        are measured consistently with the binary real data.
+        When ``differentiable=True`` (used for the generator penalty), uses a
+        soft sigmoid approximation of the 0.5 threshold so gradients flow back
+        to the generator.  When ``False`` (used for real data and logging),
+        uses a hard threshold for accurate measurement.
         """
+        if differentiable:
+            # Soft threshold: sigmoid(10*(x - 0.5)) ≈ step(x - 0.5) but differentiable
+            return torch.sigmoid(10.0 * (batch - 0.5)).mean()
         return (batch.detach() > 0.5).float().mean()
 
     def _occupancy_target(self, real_occupancy: torch.Tensor) -> torch.Tensor:
@@ -256,17 +261,17 @@ class GANTrainer(BaseTrainer):
     def _occupancy_penalty(self, fake_batch: torch.Tensor, real_occupancy: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Penalize collapse toward all-empty or occupancy-mismatched outputs.
 
-        The penalty uses abs (not square) so the gradient stays proportional to
-        the gap, plus a linear floor term whose multiplier grows with the
-        adaptive occupancy weight.
+        Uses differentiable soft-threshold occupancy so gradients flow back
+        to the generator.  Returns the hard-threshold occupancy for logging.
         """
-        fake_occupancy = self._compute_occupancy(fake_batch)
+        soft_occ = self._compute_occupancy(fake_batch, differentiable=True)
+        hard_occ = self._compute_occupancy(fake_batch, differentiable=False)
         target = self._occupancy_target(real_occupancy)
-        occupancy_gap = fake_occupancy - target
+        occupancy_gap = soft_occ - target
         floor = float(getattr(self.config, "occupancy_floor", 0.01))
-        floor_deficit = F.relu(fake_occupancy.new_tensor(floor) - fake_occupancy)
+        floor_deficit = F.relu(soft_occ.new_tensor(floor) - soft_occ)
         penalty = occupancy_gap.abs() + 10.0 * floor_deficit
-        return penalty, fake_occupancy
+        return penalty, hard_occ
 
     # ------------------------------------------------------------------
     # Adaptive balance controller
