@@ -452,3 +452,7 @@ docker-restart:
 
 docker-ps:
 	@docker compose ps
+
+docker-local:
+	@test -f .env.docker || (echo ".env.docker not found"; exit 1)
+	@docker compose up --build

@@ -1,39 +1,44 @@
-version: "3.9"
-
 services:
   mlflow:
-    image: ${MLFLOW_IMAGE:-ghcr.io/mlflow/mlflow:v2.13.1}
+    build:
+      context: .
+      dockerfile: services/mlflow/Dockerfile
     environment:
-      PORT: 8080
-      BACKEND_STORE_URI: ${BACKEND_STORE_URI:-sqlite:///mlflow.db}
-      ARTIFACT_ROOT: ${ARTIFACT_ROOT:-./mlruns}
+      PORT: "8080"
+      BACKEND_STORE_URI: sqlite:///mlflow-data/mlflow.db
+      ARTIFACT_ROOT: /mlflow-data/mlruns
     ports:
       - "8080:8080"
+    volumes:
+      - mlflow-data:/mlflow-data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   trainer:
     build:
       context: .
       dockerfile: services/trainer/Dockerfile
+    env_file: .env.docker
     environment:
-      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:8080}
-      MODELS_BUCKET: ${MODELS_BUCKET:-local-bucket}
-      LATEST_MODEL_POINTER_PATH: ${LATEST_MODEL_POINTER_PATH:-gs://local-bucket/models/latest.json}
-      TRAIN_REQUEST_JSON: ${TRAIN_REQUEST_JSON:-}
+      MLFLOW_TRACKING_URI: http://mlflow:8080
+    volumes:
+      - models:/app/models
+      - ./data:/app/data:ro
     depends_on:
-      - mlflow
+      mlflow:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
-  inference:
-    build:
-      context: .
-      dockerfile: services/inference/Dockerfile
-    environment:
-      PROJECT_ID: ${PROJECT_ID:-local}
-      REGION: ${REGION:-local}
-      TRAIN_JOB_NAME: ${TRAIN_JOB_NAME:-trainer-job}
-      MODELS_BUCKET: ${MODELS_BUCKET:-local-bucket}
-      LATEST_MODEL_POINTER_PATH: ${LATEST_MODEL_POINTER_PATH:-gs://local-bucket/models/latest.json}
-      ALLOW_GCLOUD_FALLBACK: ${ALLOW_GCLOUD_FALLBACK:-false}
-    ports:
-      - "8081:8080"
-    depends_on:
-      - mlflow
+volumes:
+  mlflow-data:
+  models:

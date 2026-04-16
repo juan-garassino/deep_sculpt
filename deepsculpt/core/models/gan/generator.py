@@ -42,9 +42,7 @@ class SimpleGenerator(BaseGenerator):
         self.conv4 = ConvTranspose(noise_dim // 4, self.output_channels, 3, 2, 1, 1, bias=False)
         
         self.relu = nn.ReLU()
-        self.threshold_relu = nn.Threshold(0.0, 0.0)
-        self.softmax = nn.Softmax(dim=1)
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Initial dense layer and reshape
         x = self.fc(x)
@@ -57,7 +55,7 @@ class SimpleGenerator(BaseGenerator):
             x = self.bn1(x)
         x = self.relu(x)
         x = x.view(-1, self.noise_dim, self.initial_size, self.initial_size, self.initial_size)
-        
+
         # First transposed conv block
         x = self.conv1(x)
         if x.size(0) == 1 and self.training:
@@ -67,7 +65,7 @@ class SimpleGenerator(BaseGenerator):
         else:
             x = self.bn2(x)
         x = self.relu(x)
-        
+
         # Second transposed conv block
         x = self.conv2(x)
         if x.size(0) == 1 and self.training:
@@ -77,7 +75,7 @@ class SimpleGenerator(BaseGenerator):
         else:
             x = self.bn3(x)
         x = self.relu(x)
-        
+
         # Third transposed conv block
         x = self.conv3(x)
         if x.size(0) == 1 and self.training:
@@ -87,15 +85,11 @@ class SimpleGenerator(BaseGenerator):
         else:
             x = self.bn4(x)
         x = self.relu(x)
-        
+
         # Final transposed conv block
         x = self.conv4(x)
-        x = self.softmax(x)
-        x = self.threshold_relu(x)
-        
-        # Output is already in PyTorch format: (batch, channels, D, H, W)
-        # No need to reshape - conv4 already outputs the correct shape
-        
+        x = torch.sigmoid(x)
+
         return x
 
 
@@ -198,45 +192,48 @@ class SkipGenerator(BaseGenerator):
         self.conv4 = ConvTranspose(noise_dim // 4 * 2, self.output_channels, 3, 2, 1, 1, bias=False)
         
         self.relu = nn.ReLU()
-        self.threshold_relu = nn.Threshold(0.0, 0.0)
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Initial dense layer and reshape
         x = self.fc(x)
         x = self.bn1(x)
         x = self.relu(x)
         x = x.view(-1, self.noise_dim, self.initial_size, self.initial_size, self.initial_size)
-        
+
         skip_connections = []
-        
+
         # First layer
         x = self.conv1(x)
         x = self.bn2(x)
         x = self.relu(x)
         skip_connections.append(x)
-        
+
         # Second layer with skip connection
         x = torch.cat([x, skip_connections[-1]], dim=1)
         x = self.conv2(x)
         x = self.bn3(x)
         x = self.relu(x)
         skip_connections.append(x)
-        
+
         # Third layer with skip connection
         x = torch.cat([x, skip_connections[-1]], dim=1)
         x = self.conv3(x)
         x = self.bn4(x)
         x = self.relu(x)
         skip_connections.append(x)
-        
+
         # Final layer with skip connection
         x = torch.cat([x, skip_connections[-1]], dim=1)
         x = self.conv4(x)
-        x = self.threshold_relu(x)
-        
+        # Sigmoid bounds output to [0,1] with gradients everywhere.
+        # Threshold/ReLU caused empty collapse: random-init produces ~50%
+        # occupancy, disc learns "dense=fake", gen overshoots to 0% with
+        # no gradient path back (ReLU is flat at 0).
+        x = torch.sigmoid(x)
+
         # Reshape to final output in PyTorch format (channels first)
         x = x.view(-1, self.output_channels, self.void_dim, self.void_dim, self.void_dim)
-        
+
         return x
 
 
@@ -270,38 +267,35 @@ class MonochromeGenerator(BaseGenerator):
         self.conv4 = ConvTranspose(noise_dim // 4, self.output_channels, 3, 2, 1, 1, bias=False)
         
         self.relu = nn.ReLU()
-        self.threshold_relu = nn.Threshold(0.0, 0.0)
-    
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Initial dense layer and reshape
         x = self.fc(x)
         x = self.bn1(x)
         x = self.relu(x)
         x = x.view(-1, self.noise_dim, self.initial_size, self.initial_size, self.initial_size)
-        
+
         # First transposed conv block
         x = self.conv1(x)
         x = self.bn2(x)
         x = self.relu(x)
-        
+
         # Second transposed conv block
         x = self.conv2(x)
         x = self.bn3(x)
         x = self.relu(x)
-        
+
         # Third transposed conv block
         x = self.conv3(x)
         x = self.bn4(x)
         x = self.relu(x)
-        
+
         # Final transposed conv block
         x = self.conv4(x)
-        x = self.relu(x)
-        x = self.threshold_relu(x)
-        
+        x = torch.sigmoid(x)
+
         # Reshape to final output
         x = x.view(-1, self.void_dim, self.void_dim, self.void_dim, self.output_channels)
-        
+
         return x
 
 

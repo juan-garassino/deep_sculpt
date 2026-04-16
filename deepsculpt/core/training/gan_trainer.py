@@ -145,6 +145,24 @@ class GANTrainer(BaseTrainer):
         self.last_epoch_metrics: Dict[str, float] = {}
         self.last_run_summary: Dict[str, Any] = {}
 
+        # TTUR: when gen and disc start with the same LR, reduce disc to 25%
+        # to prevent the discriminator from winning too easily on sparse data.
+        gen_lr = self.gen_optimizer.param_groups[0]["lr"]
+        disc_lr = self.disc_optimizer.param_groups[0]["lr"]
+        if abs(gen_lr - disc_lr) < 1e-8:
+            ttur_ratio = float(getattr(config, "ttur_ratio", 0.25))
+            for pg in self.disc_optimizer.param_groups:
+                pg["lr"] = gen_lr * ttur_ratio
+            self.logger.info("TTUR: disc LR set to %.6f (gen LR %.6f × %.2f)", gen_lr * ttur_ratio, gen_lr, ttur_ratio)
+
+        # Adaptive balance controller state
+        self._occupancy_health = 1.0  # EMA: 1.0 = healthy, 0.0 = collapsed
+        self._adaptive_occ_weight = float(getattr(config, "occupancy_loss_weight", 5.0))
+        self._base_occ_weight = self._adaptive_occ_weight
+        self._adaptive_gen_steps = 1  # how many gen steps per disc step
+        self._disc_lr_scale = 1.0  # multiplicative factor on disc LR
+        self._base_disc_lr = self.disc_optimizer.param_groups[0]["lr"]
+
     def _create_ema_generator(self) -> nn.Module:
         """Create EMA version of the generator for stable sampling."""
         ema_generator = copy.deepcopy(self.generator)
@@ -220,8 +238,12 @@ class GANTrainer(BaseTrainer):
         return total_norm_sq ** 0.5
 
     def _compute_occupancy(self, batch: torch.Tensor) -> torch.Tensor:
-        """Compute scalar occupancy ratio for a voxel batch."""
-        return (batch.detach().abs() > 0).float().mean()
+        """Compute scalar occupancy ratio for a voxel batch.
+
+        Uses a 0.5 threshold so that sigmoid outputs (continuous in 0–1)
+        are measured consistently with the binary real data.
+        """
+        return (batch.detach() > 0.5).float().mean()
 
     def _occupancy_target(self, real_occupancy: torch.Tensor) -> torch.Tensor:
         """Resolve the occupancy target for generator regularization."""
@@ -232,19 +254,73 @@ class GANTrainer(BaseTrainer):
         return real_occupancy.detach()
 
     def _occupancy_penalty(self, fake_batch: torch.Tensor, real_occupancy: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Penalize collapse toward all-empty or occupancy-mismatched outputs."""
+        """Penalize collapse toward all-empty or occupancy-mismatched outputs.
+
+        The penalty uses abs (not square) so the gradient stays proportional to
+        the gap, plus a linear floor term whose multiplier grows with the
+        adaptive occupancy weight.
+        """
         fake_occupancy = self._compute_occupancy(fake_batch)
         target = self._occupancy_target(real_occupancy)
         occupancy_gap = fake_occupancy - target
         floor = float(getattr(self.config, "occupancy_floor", 0.01))
         floor_deficit = F.relu(fake_occupancy.new_tensor(floor) - fake_occupancy)
-        # Use abs (not square) so the gradient stays proportional to the gap,
-        # plus a strong linear floor term to kick the generator out of empty collapse.
-        penalty = occupancy_gap.abs() + 5.0 * floor_deficit
+        penalty = occupancy_gap.abs() + 10.0 * floor_deficit
         return penalty, fake_occupancy
 
+    # ------------------------------------------------------------------
+    # Adaptive balance controller
+    # ------------------------------------------------------------------
+
+    def _update_adaptive_balance(self, metrics: Dict[str, float]):
+        """Continuous feedback loop that adjusts training balance based on
+        occupancy health.  Runs every step — no fixed patience or hard resets.
+
+        Three control surfaces:
+        1. ``_adaptive_occ_weight`` — occupancy penalty multiplier on gen loss
+        2. ``_adaptive_gen_steps`` — extra generator steps per batch (1–4)
+        3. ``_disc_lr_scale`` — multiplicative factor applied to disc LR
+
+        The controller uses an EMA ``_occupancy_health`` score (1 = healthy,
+        0 = fully collapsed) to smoothly ramp these up during collapse and
+        back off during recovery.
+        """
+        occupancy_floor = float(getattr(self.config, "occupancy_floor", 0.01))
+        fake_occ = metrics.get("fake_occupancy", 0.5)
+        real_occ = metrics.get("real_occupancy", 0.05)
+
+        # --- compute instantaneous health (0–1) -------------------------
+        if real_occ > 1e-6:
+            ratio = min(fake_occ / real_occ, 2.0)  # cap at 2× to ignore overshoot
+        else:
+            ratio = 1.0 if fake_occ > occupancy_floor else 0.0
+        # Below floor is always unhealthy regardless of ratio
+        if fake_occ < occupancy_floor:
+            ratio = 0.0
+        instant_health = min(ratio, 1.0)
+
+        # --- EMA update --------------------------------------------------
+        ema_beta = 0.95
+        self._occupancy_health = ema_beta * self._occupancy_health + (1 - ema_beta) * instant_health
+
+        h = self._occupancy_health  # shorthand
+
+        # --- 1. Occupancy penalty weight: boost when unhealthy -----------
+        # Ranges from 1× (healthy) to 5× (collapsed) of base weight
+        occ_boost = 1.0 + 4.0 * (1.0 - h)
+        self._adaptive_occ_weight = self._base_occ_weight * occ_boost
+
+        # --- 2. Extra generator steps: 1 when healthy, up to 4 collapsed -
+        self._adaptive_gen_steps = max(1, min(4, int(1 + 3 * (1.0 - h))))
+
+        # --- 3. Disc LR scale: 1× healthy → 0.25× collapsed -------------
+        self._disc_lr_scale = 0.25 + 0.75 * h
+        for pg in self.disc_optimizer.param_groups:
+            pg["lr"] = self._base_disc_lr * self._disc_lr_scale
+
     def _check_step_health(self, metrics: Dict[str, float]):
-        """Emit warnings on obvious collapse or non-finite states."""
+        """Emit warnings on obvious collapse or non-finite states and run
+        the adaptive balance controller."""
         values = [value for value in metrics.values() if isinstance(value, (int, float))]
         if any(not np.isfinite(value) for value in values):
             self.nan_events += 1
@@ -253,11 +329,13 @@ class GANTrainer(BaseTrainer):
                 raise RuntimeError("Non-finite GAN metrics detected")
 
         occupancy_floor = float(getattr(self.config, "occupancy_floor", 0.01))
-        if (
+        is_collapsed = (
             metrics.get("disc_loss", 1.0) < 1e-3
             or metrics.get("fake_occupancy", 0.5) < occupancy_floor
             or metrics.get("fake_occupancy", 0.5) > 0.9999
-        ):
+        )
+
+        if is_collapsed:
             self.collapse_events += 1
             if self.collapse_events >= 3:
                 status = "empty"
@@ -277,6 +355,9 @@ class GANTrainer(BaseTrainer):
                     )
         else:
             self.collapse_events = 0
+
+        # Run the adaptive controller every step
+        self._update_adaptive_balance(metrics)
     
     def adversarial_loss(self, output: torch.Tensor, target_is_real: bool) -> torch.Tensor:
         """
@@ -371,50 +452,79 @@ class GANTrainer(BaseTrainer):
         r1_penalty_value = 0.0
         real_occupancy = self._compute_occupancy(real_data)
 
-        self.disc_optimizer.zero_grad(set_to_none=True)
-        noise = torch.randn(batch_size, self.noise_dim, device=self.device)
-        with torch.autocast(device_type=self.device, enabled=autocast_enabled):
-            fake_for_disc = self.generator(noise).detach()
-            real_logits = self.discriminator(self._apply_ada_lite(real_data))
-            fake_logits = self.discriminator(self._apply_ada_lite(fake_for_disc))
-            disc_real_loss = F.softplus(-real_logits).mean()
-            disc_fake_loss = F.softplus(fake_logits).mean()
-            disc_loss = disc_real_loss + disc_fake_loss
+        # Instance noise: decaying Gaussian added to disc inputs so it can't
+        # instantly memorize "sparse = real" in the first few batches.
+        decay_steps = float(getattr(self.config, "instance_noise_decay_steps", 2000))
+        noise_std = max(0.0, 0.1 * (1.0 - self.global_step / decay_steps))
 
-        disc_loss.backward()
-        if self.config.gradient_clip > 0:
-            torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.config.gradient_clip)
-        disc_grad_norm = self._gradient_norm(self.discriminator.parameters())
-        self.disc_optimizer.step()
+        # --- Discriminator step (skipped when health is critically low) ---
+        skip_disc = self._occupancy_health < 0.1
+        disc_grad_norm = 0.0
 
-        if self.global_step % max(1, getattr(self.config, "r1_interval", 16)) == 0:
+        if not skip_disc:
             self.disc_optimizer.zero_grad(set_to_none=True)
-            r1_penalty = self._compute_r1_penalty(real_data)
-            r1_penalty_value = float(r1_penalty.item())
-            r1_loss = 0.5 * getattr(self.config, "r1_gamma", 10.0) * r1_penalty * max(1, getattr(self.config, "r1_interval", 16))
-            r1_loss.backward()
+            noise = torch.randn(batch_size, self.noise_dim, device=self.device)
+            with torch.autocast(device_type=self.device, enabled=autocast_enabled):
+                fake_for_disc = self.generator(noise).detach()
+                # Add instance noise to disc inputs (not gen path)
+                real_noisy = real_data + noise_std * torch.randn_like(real_data) if noise_std > 0 else real_data
+                fake_noisy = fake_for_disc + noise_std * torch.randn_like(fake_for_disc) if noise_std > 0 else fake_for_disc
+                real_logits = self.discriminator(self._apply_ada_lite(real_noisy))
+                fake_logits = self.discriminator(self._apply_ada_lite(fake_noisy))
+                disc_real_loss = F.softplus(-real_logits).mean()
+                disc_fake_loss = F.softplus(fake_logits).mean()
+                disc_loss = disc_real_loss + disc_fake_loss
+
+            disc_loss.backward()
             if self.config.gradient_clip > 0:
                 torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.config.gradient_clip)
+            disc_grad_norm = self._gradient_norm(self.discriminator.parameters())
             self.disc_optimizer.step()
 
-        self.gen_optimizer.zero_grad(set_to_none=True)
-        noise = torch.randn(batch_size, self.noise_dim, device=self.device)
-        with torch.autocast(device_type=self.device, enabled=autocast_enabled):
-            fake_for_gen = self.generator(noise)
-            gen_logits = self.discriminator(self._apply_ada_lite(fake_for_gen))
-            gen_loss = F.softplus(-gen_logits).mean()
-            occupancy_penalty, fake_occupancy = self._occupancy_penalty(fake_for_gen, real_occupancy)
-            occupancy_loss = occupancy_penalty * float(getattr(self.config, "occupancy_loss_weight", 5.0))
-            gen_loss = gen_loss + occupancy_loss
+            if self.global_step % max(1, getattr(self.config, "r1_interval", 16)) == 0:
+                self.disc_optimizer.zero_grad(set_to_none=True)
+                r1_penalty = self._compute_r1_penalty(real_data)
+                r1_penalty_value = float(r1_penalty.item())
+                r1_loss = 0.5 * getattr(self.config, "r1_gamma", 10.0) * r1_penalty * max(1, getattr(self.config, "r1_interval", 16))
+                r1_loss.backward()
+                if self.config.gradient_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.config.gradient_clip)
+                self.disc_optimizer.step()
+        else:
+            # Still need logits for metrics even when skipping disc update
+            with torch.no_grad():
+                noise = torch.randn(batch_size, self.noise_dim, device=self.device)
+                fake_for_disc = self.generator(noise)
+                real_logits = self.discriminator(real_data)
+                fake_logits = self.discriminator(fake_for_disc)
+                disc_real_loss = F.softplus(-real_logits).mean()
+                disc_fake_loss = F.softplus(fake_logits).mean()
+                disc_loss = disc_real_loss + disc_fake_loss
 
-        gen_loss.backward()
-        if self.config.gradient_clip > 0:
-            torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.config.gradient_clip)
-        gen_grad_norm = self._gradient_norm(self.generator.parameters())
-        self.gen_optimizer.step()
+        # --- Generator steps (adaptive count: 1 when healthy, up to 4) ---
+        occ_weight = self._adaptive_occ_weight
+        gen_steps = self._adaptive_gen_steps
+
+        for _ in range(gen_steps):
+            self.gen_optimizer.zero_grad(set_to_none=True)
+            noise = torch.randn(batch_size, self.noise_dim, device=self.device)
+            with torch.autocast(device_type=self.device, enabled=autocast_enabled):
+                fake_for_gen = self.generator(noise)
+                gen_logits = self.discriminator(self._apply_ada_lite(fake_for_gen))
+                gen_loss = F.softplus(-gen_logits).mean()
+                occupancy_penalty, fake_occupancy = self._occupancy_penalty(fake_for_gen, real_occupancy)
+                occupancy_loss = occupancy_penalty * occ_weight
+                gen_loss = gen_loss + occupancy_loss
+
+            gen_loss.backward()
+            if self.config.gradient_clip > 0:
+                torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.config.gradient_clip)
+            gen_grad_norm = self._gradient_norm(self.generator.parameters())
+            self.gen_optimizer.step()
 
         self._update_ema_generator()
-        self._update_augment_probability(real_logits.detach())
+        if not skip_disc:
+            self._update_augment_probability(real_logits.detach())
 
         step_metrics = {
             "loss": float(gen_loss.item()),
@@ -433,6 +543,11 @@ class GANTrainer(BaseTrainer):
             "occupancy_penalty": float(occupancy_penalty.item()),
             "gen_grad_norm": gen_grad_norm,
             "disc_grad_norm": disc_grad_norm,
+            "occ_health": self._occupancy_health,
+            "adaptive_occ_weight": occ_weight,
+            "adaptive_gen_steps": float(gen_steps),
+            "disc_lr_scale": self._disc_lr_scale,
+            "disc_skipped": float(skip_disc),
         }
 
         self._check_step_health(step_metrics)
@@ -525,14 +640,13 @@ class GANTrainer(BaseTrainer):
                 self.log_metrics(step_metrics, self.global_step, "train_step")
                 self.logger.info(
                     f"Epoch {self.current_epoch}, Batch {batch_idx}: "
-                    f"Gen Loss: {step_metrics.get('gen_loss', 0):.4f}, "
-                    f"Disc Loss: {step_metrics.get('disc_loss', 0):.4f}, "
-                    f"R1: {step_metrics.get('r1_penalty', 0):.4f}, "
-                    f"AugP: {step_metrics.get('augment_p', 0):.3f}, "
-                    f"RealOcc: {step_metrics.get('real_occupancy', 0):.4f}, "
+                    f"G: {step_metrics.get('gen_loss', 0):.4f}, "
+                    f"D: {step_metrics.get('disc_loss', 0):.4f}, "
                     f"FakeOcc: {step_metrics.get('fake_occupancy', 0):.4f}, "
-                    f"OccGap: {step_metrics.get('occupancy_gap', 0):.4f}, "
-                    f"OccPenalty: {step_metrics.get('occupancy_penalty', 0):.4f}"
+                    f"Health: {step_metrics.get('occ_health', 1):.2f}, "
+                    f"OccW: {step_metrics.get('adaptive_occ_weight', 0):.1f}, "
+                    f"GenSteps: {step_metrics.get('adaptive_gen_steps', 1):.0f}, "
+                    f"DScale: {step_metrics.get('disc_lr_scale', 1):.2f}"
                 )
             
             self.global_step += 1
