@@ -511,16 +511,22 @@ class GANTrainer(BaseTrainer):
         occ_weight = self._adaptive_occ_weight
         gen_steps = self._adaptive_gen_steps
 
+        # Gate adversarial loss by occupancy health: when the generator is
+        # far from the target density, dampen the adversarial signal so the
+        # occupancy penalty can actually steer without being overwhelmed.
+        # adv_gate: 1.0 when healthy, ~0.1 when collapsed.
+        adv_gate = max(0.1, self._occupancy_health)
+
         for _ in range(gen_steps):
             self.gen_optimizer.zero_grad(set_to_none=True)
             noise = torch.randn(batch_size, self.noise_dim, device=self.device)
             with torch.autocast(device_type=self.device, enabled=autocast_enabled):
                 fake_for_gen = self.generator(noise)
                 gen_logits = self.discriminator(self._apply_ada_lite(fake_for_gen))
-                gen_loss = F.softplus(-gen_logits).mean()
+                adv_loss = F.softplus(-gen_logits).mean() * adv_gate
                 occupancy_penalty, fake_occupancy = self._occupancy_penalty(fake_for_gen, real_occupancy)
                 occupancy_loss = occupancy_penalty * occ_weight
-                gen_loss = gen_loss + occupancy_loss
+                gen_loss = adv_loss + occupancy_loss
 
             gen_loss.backward()
             if self.config.gradient_clip > 0:
