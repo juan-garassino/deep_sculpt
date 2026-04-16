@@ -122,41 +122,40 @@ class ComplexGenerator(BaseGenerator):
         self.conv4 = ConvTranspose(noise_dim // 4 * 2, self.output_channels, 3, 2, 1, 1, bias=False)
         
         self.leaky_relu = nn.LeakyReLU(0.2)
-        self.tanh = nn.Tanh()
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Initial dense layer and reshape
         x = self.fc(x)
         x = self.bn1(x)
         x = self.leaky_relu(x)
         x = x.view(-1, self.noise_dim, self.initial_size, self.initial_size, self.initial_size)
-        
+
         skip_connections = []
-        
+
         # First layer
         x = self.conv1(x)
         x = self.bn2(x)
         x = self.leaky_relu(x)
         skip_connections.append(x)
-        
+
         # Second layer with skip connection
         x = torch.cat([x, skip_connections[-1]], dim=1)
         x = self.conv2(x)
         x = self.bn3(x)
         x = self.leaky_relu(x)
         skip_connections.append(x)
-        
+
         # Third layer with skip connection
         x = torch.cat([x, skip_connections[-1]], dim=1)
         x = self.conv3(x)
         x = self.bn4(x)
         x = self.leaky_relu(x)
         skip_connections.append(x)
-        
+
         # Final layer with skip connection
         x = torch.cat([x, skip_connections[-1]], dim=1)
         x = self.conv4(x)
-        x = self.tanh(x)
+        x = torch.sigmoid(x)
         
         # Reshape to final output
         x = x.view(-1, self.void_dim, self.void_dim, self.void_dim, self.output_channels)
@@ -486,36 +485,35 @@ class ConditionalGenerator(BaseGenerator):
         self.conv4 = ConvTranspose(noise_dim // 4, self.output_channels, 3, 2, 1, 1, bias=False)
         
         self.relu = nn.ReLU()
-        self.tanh = nn.Tanh()
-    
+
     def forward(self, x: torch.Tensor, condition: Optional[torch.Tensor] = None) -> torch.Tensor:
         if condition is not None:
             # Embed condition
             condition_embedded = self.condition_embedding(condition)
             # Concatenate noise and condition
             x = torch.cat([x, condition_embedded], dim=1)
-        
+
         # Initial dense layer and reshape
         x = self.fc(x)
         x = self.bn1(x)
         x = self.relu(x)
         x = x.view(-1, self.noise_dim, self.initial_size, self.initial_size, self.initial_size)
-        
+
         # Transposed conv blocks
         x = self.conv1(x)
         x = self.bn2(x)
         x = self.relu(x)
-        
+
         x = self.conv2(x)
         x = self.bn3(x)
         x = self.relu(x)
-        
+
         x = self.conv3(x)
         x = self.bn4(x)
         x = self.relu(x)
-        
+
         x = self.conv4(x)
-        x = self.tanh(x)
+        x = torch.sigmoid(x)
         
         # Reshape to final output
         x = x.view(-1, self.void_dim, self.void_dim, self.void_dim, self.output_channels)
