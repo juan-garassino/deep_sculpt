@@ -690,28 +690,52 @@ class PyTorchSculptor:
             pipe_start = max(0, slab_margin - 1)
             pipe_end = min(self.void_dim, self.void_dim - slab_margin + 1)
 
-            for axis_selection, axis_name in ((0, "x"), (1, "y")):
+            # 3 pipes: red, blue, yellow — orthogonal, different levels
+            # One spans 1 gap, two span 2 gaps. Alternate x/y axes.
+            pipe_colors_list = ["red", "blue", "yellow"]
+            pipe_configs = []  # (axis, gap_start_idx, num_gaps)
+
+            if len(gaps) >= 3:
+                # Spread across gaps: pipe 0 = 1 gap, pipe 1 = 2 gaps, pipe 2 = 2 gaps
+                used_gaps = random.sample(range(len(gaps)), min(3, len(gaps)))
+                used_gaps.sort()
+                pipe_configs = [
+                    (0, used_gaps[0], 1),  # x-aligned, 1 gap
+                    (1, used_gaps[1], 2 if used_gaps[1] + 1 < len(gaps) else 1),  # y-aligned, 2 gaps
+                    (0, used_gaps[2] if len(used_gaps) > 2 else used_gaps[0], 1),  # x-aligned, 1 gap
+                ]
+            elif len(gaps) >= 1:
+                pipe_configs = [
+                    (0, 0, 1),
+                    (1, min(1, len(gaps) - 1), 1),
+                    (0, min(2, len(gaps) - 1), 1),
+                ]
+
+            for pipe_idx, (axis_selection, gap_idx, num_gaps) in enumerate(pipe_configs):
                 current_op += 1
-                log_action(f"Adding {axis_name}-aligned pipe ({current_op}/{total_ops})")
-                # Pick a random gap between slabs
-                if gaps:
-                    gap = gaps[random.randint(0, len(gaps) - 1)]
-                    snap_z = (gap[0] + gap[1]) // 2
-                    pipe_depth = gap[1] - gap[0]
-                else:
-                    snap_z = self.void_dim // 2
-                    pipe_depth = floor_step - 2
-                # Force pipe depth to fit exactly in the gap
+                axis_name = "x" if axis_selection == 0 else "y"
+                log_action(f"Adding {axis_name}-aligned pipe {pipe_idx+1}/3 ({current_op}/{total_ops})")
+
+                # Compute z range spanning num_gaps consecutive gaps
+                end_gap_idx = min(gap_idx + num_gaps - 1, len(gaps) - 1)
+                z_lo = gaps[gap_idx][0]
+                z_hi = gaps[end_gap_idx][1]
+                snap_z = (z_lo + z_hi) // 2
+                pipe_depth = z_hi - z_lo
                 depth_ratio = pipe_depth / self.void_dim
-                # Pipe x/y span: 30-60% of canvas, snapped to grid
+
+                # Force specific color for this pipe
+                pipe_color_override = {
+                    "pipes": [pipe_colors_list[pipe_idx % len(pipe_colors_list)]]
+                }
+
                 pipe_span_pct = random.uniform(0.3, 0.6)
-                pipe_span = max(2, int(self.void_dim * pipe_span_pct))
                 self.structure, self.colors = attach_pipe_pytorch(
                     self.structure, self.colors,
                     element_volume_min_ratio=depth_ratio,
                     element_volume_max_ratio=depth_ratio,
                     step=self.step,
-                    colors_dict=self.colors_dict,
+                    colors_dict=pipe_color_override,
                     device=self.device,
                     sparse_mode=self.sparse_mode,
                     wall_thickness=random.randint(1, 2),
