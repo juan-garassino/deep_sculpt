@@ -142,6 +142,7 @@ def attach_edge_pytorch(
     device: str = "cpu",
     sparse_mode: bool = False,
     batch_size: int = 1,
+    snap_to_grid: Optional[int] = None,
     verbose: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
@@ -177,7 +178,12 @@ def attach_edge_pytorch(
 
         other_axes = [i for i in range(3) if i != axis]
         for i in other_axes:
-            position[i] = random.randint(0, structure.shape[i] - 1)
+            if snap_to_grid is not None:
+                # Snap to column grid positions
+                grid_positions = list(range(0, structure.shape[i], snap_to_grid + 1))
+                position[i] = random.choice(grid_positions) if grid_positions else 0
+            else:
+                position[i] = random.randint(0, structure.shape[i] - 1)
 
         pos_info = [
             f"{i}: {'slice' if isinstance(p, slice) else p}" for i, p in enumerate(position)

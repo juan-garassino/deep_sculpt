@@ -681,6 +681,7 @@ class PyTorchSculptor:
                     colors_dict=self.colors_dict,
                     device=self.device,
                     sparse_mode=self.sparse_mode,
+                    snap_to_grid=self.grid[1] if self.grid[0] == 1 else None,
                     verbose=self.verbose,
                 )
                 self._check_memory_and_optimize()
