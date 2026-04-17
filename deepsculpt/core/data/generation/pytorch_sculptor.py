@@ -707,31 +707,48 @@ class PyTorchSculptor:
                 )
                 self._check_memory_and_optimize()
 
-            # Snap pipes to midpoints between floor slabs
+            # Build list of gaps between slabs: (z_start, z_end) with 1 voxel clearance
             slab_zs = slab_zs_all + [self.void_dim]
-            mid_zs = [(slab_zs[i] + slab_zs[i + 1]) // 2 for i in range(len(slab_zs) - 1)]
+            gaps = []
+            for i in range(len(slab_zs) - 1):
+                z_lo = slab_zs[i] + 1      # 1 voxel above lower slab
+                z_hi = slab_zs[i + 1] - 1  # 1 voxel below upper slab
+                if z_hi > z_lo:
+                    gaps.append((z_lo, z_hi))
 
-            # Max pipe depth = space between slabs (so pipes fit between floors)
-            max_pipe_ratio = min(self.pipes[2], (floor_step - 1) / self.void_dim)
-
-            # Pipes span nearly full canvas (1 voxel beyond slab extent)
-            pipe_span_ratio = min(0.95, 1.0 - (max(1, self.void_dim // 10) - 1) / self.void_dim)
+            # Slab is 80% of floor; pipes extend 1 voxel beyond slab edge
+            slab_margin = max(1, self.void_dim // 10)
+            pipe_start = max(0, slab_margin - 1)
+            pipe_end = min(self.void_dim, self.void_dim - slab_margin + 1)
 
             for axis_selection, axis_name in ((0, "x"), (1, "y")):
                 current_op += 1
                 log_action(f"Adding {axis_name}-aligned pipe ({current_op}/{total_ops})")
-                # Pick a random mid-slab z position
-                snap_z = mid_zs[random.randint(0, len(mid_zs) - 1)] if mid_zs else self.void_dim // 2
+                # Pick a random gap between slabs
+                if gaps:
+                    gap = gaps[random.randint(0, len(gaps) - 1)]
+                    snap_z = (gap[0] + gap[1]) // 2
+                    pipe_depth = gap[1] - gap[0]
+                else:
+                    snap_z = self.void_dim // 2
+                    pipe_depth = floor_step - 2
+                # Force pipe depth to fit exactly in the gap
+                depth_ratio = pipe_depth / self.void_dim
+                # Pipe x/y span: 30-60% of canvas, snapped to grid
+                pipe_span_pct = random.uniform(0.3, 0.6)
+                pipe_span = max(2, int(self.void_dim * pipe_span_pct))
                 self.structure, self.colors = attach_pipe_pytorch(
                     self.structure, self.colors,
-                    element_volume_min_ratio=pipe_span_ratio,
-                    element_volume_max_ratio=max_pipe_ratio,
+                    element_volume_min_ratio=depth_ratio,
+                    element_volume_max_ratio=depth_ratio,
                     step=self.step,
                     colors_dict=self.colors_dict,
                     device=self.device,
                     sparse_mode=self.sparse_mode,
+                    wall_thickness=random.randint(1, 2),
                     axis_selection=axis_selection,
                     snap_z=snap_z,
+                    snap_xy_range=(self.grid[1],) if self.grid[0] == 1 else None,
                     verbose=self.verbose,
                 )
                 self._check_memory_and_optimize()

@@ -25,7 +25,7 @@ def main():
     sculptor = PyTorchSculptor(
         void_dim=void_dim,
         edges=(3, 0.1, 0.9),
-        planes=(3, 0.1, 0.9),
+        planes=(3, 0.1, 0.8),
         pipes=(2, 0.1, 0.9),
         grid=(1, 4),
         device="cpu",
