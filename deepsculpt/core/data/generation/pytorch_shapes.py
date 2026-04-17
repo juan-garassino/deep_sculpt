@@ -525,6 +525,7 @@ def attach_pipe_pytorch(
     wall_thickness: int = 1,
     pipe_complexity: str = "simple",  # "simple", "complex", "curved"
     axis_selection: Optional[int] = None,
+    snap_z: Optional[int] = None,
     verbose: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
@@ -559,9 +560,13 @@ def attach_pipe_pytorch(
 
         x_pos = PyTorchUtils.select_random_position(structure.shape[0], width)
         y_pos = PyTorchUtils.select_random_position(structure.shape[1], height)
-        z_pos = PyTorchUtils.select_random_position(structure.shape[2], depth)
+        if snap_z is not None:
+            # Snap to specified z, centered on the pipe depth
+            z_pos = max(0, min(snap_z - depth // 2, structure.shape[2] - depth))
+        else:
+            z_pos = PyTorchUtils.select_random_position(structure.shape[2], depth)
 
-        log_info(f"Pipe position: x={x_pos}, y={y_pos}, z={z_pos}")
+        log_info(f"Pipe position: x={x_pos}, y={y_pos}, z={z_pos}" + (f" (snapped to z={snap_z})" if snap_z is not None else ""))
 
         if axis_selection is None:
             axis_selection = random.randint(0, 1)
@@ -796,7 +801,7 @@ def attach_grid_pytorch(
     device: str = "cpu",
     sparse_mode: bool = False,
     grid_pattern: str = "regular",  # "regular", "irregular", "random"
-    grid_density: float = 0.5,
+    grid_density: float = 1.0,
     column_height_variation: bool = True,
     base_floor: bool = True,
     verbose: bool = False,
@@ -838,13 +843,10 @@ def attach_grid_pytorch(
         else:
             heights = torch.full((len(locations),), structure_dim * 7 // 8, device=device)
 
-        grid_color = PyTorchUtils.select_random_color(colors_dict["edges"])
-        log_info(f"Selected color: {grid_color}")
-
-        if isinstance(grid_color, str):
-            color_value = hash(grid_color) % 256
-        else:
-            color_value = grid_color
+        # Grid columns, floors, and slabs are always gray (structural)
+        grid_color = "gray"
+        color_value = hash("gray") % 256
+        log_info(f"Grid color: {grid_color} (value={color_value})")
 
         for i, (x, y) in enumerate(locations):
             height = heights[i].item()
@@ -863,6 +865,31 @@ def attach_grid_pytorch(
             floor_color_value = color_value
             colors[structure[:, :, 0] == 1] = floor_color_value
             log_info("Created base floor")
+
+        # Floor slabs at regular intervals — interlocking, not all full-width.
+        # Some anchor to two edges, some float toward center, some are full.
+        floor_step = max(4, structure_dim // 4)  # floor every ~8 voxels for 32^3
+        floor_color = color_value  # same gray as columns
+        for z in range(floor_step, structure_dim - 1, floor_step):
+            style = random.randint(0, 3)
+            margin = random.randint(1, structure_dim // 4)
+            if style == 0:
+                # Full floor slab
+                structure[:, :, z] = 1
+                colors[:, :, z] = floor_color
+            elif style == 1:
+                # Anchored to left+bottom edges, recessed from right+top
+                structure[:structure_dim - margin, :structure_dim - margin, z] = 1
+                colors[:structure_dim - margin, :structure_dim - margin, z] = floor_color
+            elif style == 2:
+                # Anchored to right+top edges, recessed from left+bottom
+                structure[margin:, margin:, z] = 1
+                colors[margin:, margin:, z] = floor_color
+            else:
+                # Floating center slab
+                structure[margin:structure_dim - margin, margin:structure_dim - margin, z] = 1
+                colors[margin:structure_dim - margin, margin:structure_dim - margin, z] = floor_color
+            log_info(f"Created floor slab at z={z} (style={style}, margin={margin})")
 
         if original_sparse_mode and SparseTensorHandler.should_use_sparse(structure):
             structure = SparseTensorHandler.to_sparse(structure)
@@ -968,7 +995,7 @@ def attach_grids_batch_pytorch(
     device: str = "cpu",
     sparse_mode: bool = False,
     grid_pattern: str = "regular",
-    grid_density: float = 0.5,
+    grid_density: float = 1.0,
     column_height_variation: bool = True,
     base_floor: bool = True,
     verbose: bool = False,

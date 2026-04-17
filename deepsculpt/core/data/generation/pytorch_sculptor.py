@@ -67,6 +67,7 @@ Terminology:
 import os
 import time
 import copy
+import random
 import torch
 from enum import Enum
 from typing import Tuple, List, Dict, Any, Optional, Union
@@ -159,11 +160,13 @@ class PyTorchSculptor:
             self._initialize_tensors()
 
             # --- Default colors ---
+            # Grid columns, floors, and slabs use "edges" color (gray)
+            # Structural elements (pipes, edges) stay colorful for contrast
             self.colors_dict = colors or {
                 "edges": "red",
-                "planes": "green",
-                "pipes": ["blue", "cyan", "magenta"],
-                "volumes": ["purple", "brown", "orange"],
+                "planes": "yellow",
+                "pipes": ["blue", "red"],
+                "volumes": ["blue", "red", "yellow"],
             }
 
             # --- Undo/redo history ---
@@ -698,9 +701,16 @@ class PyTorchSculptor:
                 )
                 self._check_memory_and_optimize()
 
+            # Snap pipes to midpoints between floor slabs
+            floor_step = max(4, self.void_dim // 4)
+            slab_zs = [0] + list(range(floor_step, self.void_dim - 1, floor_step)) + [self.void_dim]
+            mid_zs = [(slab_zs[i] + slab_zs[i + 1]) // 2 for i in range(len(slab_zs) - 1)]
+
             for axis_selection, axis_name in ((0, "x"), (1, "y")):
                 current_op += 1
                 log_action(f"Adding {axis_name}-aligned pipe ({current_op}/{total_ops})")
+                # Pick a random mid-slab z position
+                snap_z = mid_zs[random.randint(0, len(mid_zs) - 1)] if mid_zs else self.void_dim // 2
                 self.structure, self.colors = attach_pipe_pytorch(
                     self.structure, self.colors,
                     element_volume_min_ratio=self.pipes[1],
@@ -710,6 +720,7 @@ class PyTorchSculptor:
                     device=self.device,
                     sparse_mode=self.sparse_mode,
                     axis_selection=axis_selection,
+                    snap_z=snap_z,
                     verbose=self.verbose,
                 )
                 self._check_memory_and_optimize()
