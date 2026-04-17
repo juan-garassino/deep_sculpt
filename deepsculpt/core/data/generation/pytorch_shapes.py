@@ -143,6 +143,7 @@ def attach_edge_pytorch(
     sparse_mode: bool = False,
     batch_size: int = 1,
     snap_to_grid: Optional[int] = None,
+    snap_z_positions: Optional[List[int]] = None,
     verbose: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
@@ -158,7 +159,12 @@ def attach_edge_pytorch(
         colors = colors.to(device)
         original_sparse_mode = sparse_mode
 
-        axis = random.randint(0, 2)
+        # In architectural mode: horizontal beams only (axis 0 or 1),
+        # snapped to grid columns and slab heights
+        if snap_to_grid is not None:
+            axis = random.randint(0, 1)  # x or y only — horizontal beams
+        else:
+            axis = random.randint(0, 2)
         log_info(f"Selected axis: {axis}")
 
         edge_size = PyTorchUtils.generate_random_size(
@@ -178,8 +184,11 @@ def attach_edge_pytorch(
 
         other_axes = [i for i in range(3) if i != axis]
         for i in other_axes:
-            if snap_to_grid is not None:
-                # Snap to column grid positions
+            if i == 2 and snap_z_positions is not None:
+                # Z axis: snap to a slab height
+                position[i] = random.choice(snap_z_positions)
+            elif snap_to_grid is not None:
+                # X/Y axes: snap to column grid positions
                 grid_positions = list(range(0, structure.shape[i], snap_to_grid + 1))
                 position[i] = random.choice(grid_positions) if grid_positions else 0
             else:
@@ -872,30 +881,34 @@ def attach_grid_pytorch(
             colors[structure[:, :, 0] == 1] = floor_color_value
             log_info("Created base floor")
 
-        # Floor slabs at regular intervals — interlocking, not all full-width.
-        # Some anchor to two edges, some float toward center, some are full.
+        # Floor slabs at regular intervals — interlocking, retired from edges.
+        # Base floor is full canvas. Slabs fit within ~80% (10% margin each side).
         floor_step = max(4, structure_dim // 4)  # floor every ~8 voxels for 32^3
         floor_color = color_value  # same gray as columns
+        edge_margin = max(1, structure_dim // 10)  # 10% retired from canvas edges
+
         for z in range(floor_step, structure_dim - 1, floor_step):
-            style = random.randint(0, 3)
-            margin = random.randint(1, structure_dim // 4)
+            style = random.randint(0, 2)
+            inner_margin = random.randint(edge_margin, edge_margin + structure_dim // 6)
             if style == 0:
-                # Full floor slab
-                structure[:, :, z] = 1
-                colors[:, :, z] = floor_color
+                # Anchored to left+bottom, retired from right+top
+                structure[edge_margin:structure_dim - inner_margin,
+                          edge_margin:structure_dim - inner_margin, z] = 1
+                colors[edge_margin:structure_dim - inner_margin,
+                       edge_margin:structure_dim - inner_margin, z] = floor_color
             elif style == 1:
-                # Anchored to left+bottom edges, recessed from right+top
-                structure[:structure_dim - margin, :structure_dim - margin, z] = 1
-                colors[:structure_dim - margin, :structure_dim - margin, z] = floor_color
-            elif style == 2:
-                # Anchored to right+top edges, recessed from left+bottom
-                structure[margin:, margin:, z] = 1
-                colors[margin:, margin:, z] = floor_color
+                # Anchored to right+top, retired from left+bottom
+                structure[inner_margin:structure_dim - edge_margin,
+                          inner_margin:structure_dim - edge_margin, z] = 1
+                colors[inner_margin:structure_dim - edge_margin,
+                       inner_margin:structure_dim - edge_margin, z] = floor_color
             else:
                 # Floating center slab
-                structure[margin:structure_dim - margin, margin:structure_dim - margin, z] = 1
-                colors[margin:structure_dim - margin, margin:structure_dim - margin, z] = floor_color
-            log_info(f"Created floor slab at z={z} (style={style}, margin={margin})")
+                structure[inner_margin:structure_dim - inner_margin,
+                          inner_margin:structure_dim - inner_margin, z] = 1
+                colors[inner_margin:structure_dim - inner_margin,
+                       inner_margin:structure_dim - inner_margin, z] = floor_color
+            log_info(f"Created floor slab at z={z} (style={style}, margin={inner_margin})")
 
         if original_sparse_mode and SparseTensorHandler.should_use_sparse(structure):
             structure = SparseTensorHandler.to_sparse(structure)

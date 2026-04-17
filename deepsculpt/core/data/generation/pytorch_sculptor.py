@@ -670,6 +670,10 @@ class PyTorchSculptor:
                 )
                 self._check_memory_and_optimize()
 
+            # Compute slab z positions for snapping edges and pipes
+            floor_step = max(4, self.void_dim // 4)
+            slab_zs_all = [0] + list(range(floor_step, self.void_dim - 1, floor_step))
+
             for i in range(self.edges[0]):
                 current_op += 1
                 log_action(f"Adding edge {i+1}/{self.edges[0]} ({current_op}/{total_ops})")
@@ -682,6 +686,7 @@ class PyTorchSculptor:
                     device=self.device,
                     sparse_mode=self.sparse_mode,
                     snap_to_grid=self.grid[1] if self.grid[0] == 1 else None,
+                    snap_z_positions=slab_zs_all if self.grid[0] == 1 else None,
                     verbose=self.verbose,
                 )
                 self._check_memory_and_optimize()
@@ -703,9 +708,14 @@ class PyTorchSculptor:
                 self._check_memory_and_optimize()
 
             # Snap pipes to midpoints between floor slabs
-            floor_step = max(4, self.void_dim // 4)
-            slab_zs = [0] + list(range(floor_step, self.void_dim - 1, floor_step)) + [self.void_dim]
+            slab_zs = slab_zs_all + [self.void_dim]
             mid_zs = [(slab_zs[i] + slab_zs[i + 1]) // 2 for i in range(len(slab_zs) - 1)]
+
+            # Max pipe depth = space between slabs (so pipes fit between floors)
+            max_pipe_ratio = min(self.pipes[2], (floor_step - 1) / self.void_dim)
+
+            # Pipes span nearly full canvas (1 voxel beyond slab extent)
+            pipe_span_ratio = min(0.95, 1.0 - (max(1, self.void_dim // 10) - 1) / self.void_dim)
 
             for axis_selection, axis_name in ((0, "x"), (1, "y")):
                 current_op += 1
@@ -714,8 +724,8 @@ class PyTorchSculptor:
                 snap_z = mid_zs[random.randint(0, len(mid_zs) - 1)] if mid_zs else self.void_dim // 2
                 self.structure, self.colors = attach_pipe_pytorch(
                     self.structure, self.colors,
-                    element_volume_min_ratio=self.pipes[1],
-                    element_volume_max_ratio=self.pipes[2],
+                    element_volume_min_ratio=pipe_span_ratio,
+                    element_volume_max_ratio=max_pipe_ratio,
                     step=self.step,
                     colors_dict=self.colors_dict,
                     device=self.device,
