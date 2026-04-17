@@ -577,14 +577,15 @@ def attach_pipe_pytorch(
         if snap_xy_range is not None:
             # Snap x/y to grid column positions, random within range
             grid_step = snap_xy_range[0]  # grid step value
-            grid_positions = list(range(0, structure.shape[0], grid_step + 1))
+            dim = structure.shape[0]
+            grid_positions = [g for g in range(0, dim, grid_step + 1) if g < dim]
             x_pos = random.choice(grid_positions) if grid_positions else 0
             y_pos = random.choice(grid_positions) if grid_positions else 0
-            # Width/height span between two random grid points
-            x_end_choices = [g for g in grid_positions if g > x_pos]
-            y_end_choices = [g for g in grid_positions if g > y_pos]
-            width = (random.choice(x_end_choices) - x_pos) if x_end_choices else width
-            height = (random.choice(y_end_choices) - y_pos) if y_end_choices else height
+            # Width/height span between two random grid points, clamped to bounds
+            x_end_choices = [g for g in grid_positions if g > x_pos and g < dim]
+            y_end_choices = [g for g in grid_positions if g > y_pos and g < dim]
+            width = min((random.choice(x_end_choices) - x_pos) if x_end_choices else width, dim - x_pos)
+            height = min((random.choice(y_end_choices) - y_pos) if y_end_choices else height, dim - y_pos)
         else:
             x_pos = PyTorchUtils.select_random_position(structure.shape[0], width)
             y_pos = PyTorchUtils.select_random_position(structure.shape[1], height)
@@ -859,7 +860,16 @@ def attach_grid_pytorch(
         else:
             raise ValueError(f"Unknown grid pattern: {grid_pattern}")
 
-        log_info(f"Generated {len(locations)} grid positions")
+        # Remove outermost ring of columns (edge columns)
+        grid_xs = sorted(set(x for x, y in locations))
+        grid_ys = sorted(set(y for x, y in locations))
+        if len(grid_xs) > 2 and len(grid_ys) > 2:
+            edge_xs = {grid_xs[0], grid_xs[-1]}
+            edge_ys = {grid_ys[0], grid_ys[-1]}
+            locations = [(x, y) for x, y in locations
+                         if x not in edge_xs and y not in edge_ys]
+
+        log_info(f"Generated {len(locations)} grid positions (edge columns removed)")
 
         if column_height_variation:
             heights = torch.randint(
@@ -894,18 +904,45 @@ def attach_grid_pytorch(
             colors[structure[:, :, 0] == 1] = floor_color_value
             log_info("Created base floor")
 
-        # Floor slabs at regular intervals — 80% of base floor, centered.
-        # Base floor is full canvas. All slabs are 80% (10% margin each side).
+        # Floor slabs snap to second column row from inside + 1 voxel overhang.
+        # E.g. columns at 5,10,15,20,25 → slab from 4 to 26 (second row ±1)
         floor_step = max(4, structure_dim // 4)
         floor_color = color_value  # same gray as columns
-        slab_margin = max(1, structure_dim // 10)  # 10% on each side = 80% slab
-        slab_start = slab_margin
-        slab_end = structure_dim - slab_margin
 
-        for z in range(floor_step, structure_dim - 1, floor_step):
-            structure[slab_start:slab_end, slab_start:slab_end, z] = 1
-            colors[slab_start:slab_end, slab_start:slab_end, z] = floor_color
-            log_info(f"Created floor slab at z={z} (80% of base, margin={slab_margin})")
+        # Compute slab extent from remaining column positions
+        col_xs = sorted(set(x for x, y in locations))
+        if len(col_xs) >= 2:
+            slab_start = col_xs[0] - 1   # 1 voxel overhang beyond first column
+            slab_end = col_xs[-1] + 2     # 1 voxel overhang beyond last column
+        else:
+            slab_start = max(1, structure_dim // 10)
+            slab_end = structure_dim - slab_start
+        slab_start = max(0, slab_start)
+        slab_end = min(structure_dim, slab_end)
+
+        slab_heights = list(range(floor_step, structure_dim - 1, floor_step))
+
+        for idx, z in enumerate(slab_heights):
+            is_top = (idx == len(slab_heights) - 1)
+            if is_top:
+                # Top slab: full 80%
+                structure[slab_start:slab_end, slab_start:slab_end, z] = 1
+                colors[slab_start:slab_end, slab_start:slab_end, z] = floor_color
+                log_info(f"Created top slab at z={z} (80%)")
+            else:
+                # Middle slabs: two sides at 80% limit, other two retreat to 50-60%
+                retreat_pct = random.uniform(0.5, 0.6)
+                retreat = max(1, int(structure_dim * (1 - retreat_pct) / 2))
+                # Randomly pick which two sides retreat (x or y)
+                if random.random() < 0.5:
+                    # x sides retreat, y stays at 80%
+                    structure[retreat:structure_dim - retreat, slab_start:slab_end, z] = 1
+                    colors[retreat:structure_dim - retreat, slab_start:slab_end, z] = floor_color
+                else:
+                    # y sides retreat, x stays at 80%
+                    structure[slab_start:slab_end, retreat:structure_dim - retreat, z] = 1
+                    colors[slab_start:slab_end, retreat:structure_dim - retreat, z] = floor_color
+                log_info(f"Created middle slab at z={z} (retreat={retreat}, {retreat_pct:.0%})")
 
         if original_sparse_mode and SparseTensorHandler.should_use_sparse(structure):
             structure = SparseTensorHandler.to_sparse(structure)

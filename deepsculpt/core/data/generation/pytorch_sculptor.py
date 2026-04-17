@@ -670,42 +670,11 @@ class PyTorchSculptor:
                 )
                 self._check_memory_and_optimize()
 
-            # Compute slab z positions for snapping edges and pipes
+            # Compute slab z positions for snapping pipes
             floor_step = max(4, self.void_dim // 4)
             slab_zs_all = [0] + list(range(floor_step, self.void_dim - 1, floor_step))
 
-            for i in range(self.edges[0]):
-                current_op += 1
-                log_action(f"Adding edge {i+1}/{self.edges[0]} ({current_op}/{total_ops})")
-                self.structure, self.colors = attach_edge_pytorch(
-                    self.structure, self.colors,
-                    element_edge_min_ratio=self.edges[1],
-                    element_edge_max_ratio=self.edges[2],
-                    step=self.step,
-                    colors_dict=self.colors_dict,
-                    device=self.device,
-                    sparse_mode=self.sparse_mode,
-                    snap_to_grid=self.grid[1] if self.grid[0] == 1 else None,
-                    snap_z_positions=slab_zs_all if self.grid[0] == 1 else None,
-                    verbose=self.verbose,
-                )
-                self._check_memory_and_optimize()
-
-            for orientation in ("yz", "xz", "xy"):
-                current_op += 1
-                log_action(f"Adding {orientation} plane ({current_op}/{total_ops})")
-                self.structure, self.colors = attach_plane_pytorch(
-                    self.structure, self.colors,
-                    element_plane_min_ratio=self.planes[1],
-                    element_plane_max_ratio=self.planes[2],
-                    step=self.step,
-                    colors_dict=self.colors_dict,
-                    device=self.device,
-                    sparse_mode=self.sparse_mode,
-                    orientation=orientation,
-                    verbose=self.verbose,
-                )
-                self._check_memory_and_optimize()
+            # No edges or planes in architectural mode — just grid, slabs, and pipes
 
             # Build list of gaps between slabs: (z_start, z_end) with 1 voxel clearance
             slab_zs = slab_zs_all + [self.void_dim]
