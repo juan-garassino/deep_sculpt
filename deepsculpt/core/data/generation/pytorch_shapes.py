@@ -830,13 +830,13 @@ def attach_grid_pytorch(
 
         if column_height_variation:
             heights = torch.randint(
-                low=structure_dim // 4,
-                high=structure_dim // 2,
+                low=structure_dim * 3 // 4,
+                high=structure_dim,
                 size=(len(locations),),
                 device=device,
             )
         else:
-            heights = torch.full((len(locations),), structure_dim // 3, device=device)
+            heights = torch.full((len(locations),), structure_dim * 7 // 8, device=device)
 
         grid_color = PyTorchUtils.select_random_color(colors_dict["edges"])
         log_info(f"Selected color: {grid_color}")
@@ -885,18 +885,12 @@ def attach_grid_pytorch(
 def _generate_regular_grid_pytorch(
     structure_dim: int, step: int, density: float, device: str
 ) -> List[Tuple[int, int]]:
-    """Generate regular grid positions using PyTorch tensors."""
+    """Generate regular grid positions — full x×y array of columns at every intersection."""
     locations = []
-    if structure_dim % 2 == 0:
-        left_position = structure_dim / 2 - (step / 2)
-        right_position = left_position + (step + 1)
-        locations.append((int(left_position), int(left_position)))
-        locations.append((int(right_position), int(right_position)))
-        while left_position > 0 and right_position < (structure_dim - (step + 1)):
-            left_position -= (step + 1)
-            right_position += (step + 1)
-            locations.append((int(left_position), int(left_position)))
-            locations.append((int(right_position), int(right_position)))
+    for x in range(0, structure_dim, step + 1):
+        for y in range(0, structure_dim, step + 1):
+            if x < structure_dim and y < structure_dim:
+                locations.append((x, y))
     if density < 1.0:
         num_keep = max(1, int(len(locations) * density))
         indices = torch.randperm(len(locations), device=device)[:num_keep]
